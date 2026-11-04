@@ -153,6 +153,20 @@ APPROVE_WORDS = [r"\bapprov\w*", r"\baccett\w*", r"\bpass\w*", r"\baprueb\w*", r
                  r"\bin ordnung\b", r"\bannehm\w*", "合格", "通过", "良品"]
 
 
+POINT_WORDS = [r"\bindic\w*", r"\bpunta\w*", r"\bmostra\w*", r"\bpoint\w*", r"\bshow\w*", r"\bsenal\w*",
+               r"\bmontre\w*", r"\bzeig\w*", "指", "找", "哪"]
+
+
+def parse_cup(text: str) -> Intent | None:
+    """'indica il bicchiere rosso' / '指一下红色的纸杯' -> point_at_cup(red)."""
+    from ..vision.cups import colour_of
+    t = _n(text)
+    colour = colour_of(text)
+    if colour and _any(POINT_WORDS, t):
+        return Intent("cup", params={"colore": colour})
+    return None
+
+
 def parse_inspection(text: str, *, holding: bool) -> Intent | None:
     """'Begin inspection on tray A, reject items with scratches' -> inspect(rule); 'scartalo' -> sort to the fail tray."""
     t = _n(text)

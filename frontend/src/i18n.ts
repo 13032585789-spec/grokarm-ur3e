@@ -50,6 +50,7 @@ const it = {
   sk_vai_a_posa: "Vai a posa", sk_indica: "Indica", sk_solleva_vassoio: "Solleva vassoio",
   sk_appoggia_vassoio: "Appoggia vassoio", sk_spingi: "Spingi", sk_porta_in_ispezione: "Porta in ispezione",
   sk_smista: "Smista nel vassoio",
+  cups: "Riconosci bicchieri", cups_none: "Nessun bicchiere colorato visto.", point: "Indica", colour_red: "rosso", colour_orange: "arancione", colour_yellow: "giallo", colour_green: "verde", colour_blue: "blu", colour_purple: "viola",
 };
 type Dict = typeof it;
 
@@ -96,6 +97,7 @@ const en: Dict = {
   status_PASS: "PASS", status_FAIL: "FAIL", status_UNSURE: "UNSURE", status_NO_FRAME: "NO IMAGE",
   sk_vai_a_posa: "Go to pose", sk_indica: "Point", sk_solleva_vassoio: "Lift tray", sk_appoggia_vassoio: "Put tray down",
   sk_spingi: "Push", sk_porta_in_ispezione: "Bring to camera", sk_smista: "Sort into tray",
+  cups: "Detect cups", cups_none: "No coloured cup in view.", point: "Point", colour_red: "red", colour_orange: "orange", colour_yellow: "yellow", colour_green: "green", colour_blue: "blue", colour_purple: "purple",
 };
 
 const zh: Dict = {
@@ -138,6 +140,7 @@ const zh: Dict = {
   status_PASS: "合格", status_FAIL: "不合格", status_UNSURE: "无法判断", status_NO_FRAME: "无画面",
   sk_vai_a_posa: "移动到姿态", sk_indica: "指向", sk_solleva_vassoio: "抬起托盘", sk_appoggia_vassoio: "放下托盘",
   sk_spingi: "推动", sk_porta_in_ispezione: "送到相机前", sk_smista: "分拣到托盘",
+  cups: "识别纸杯", cups_none: "画面里没有彩色纸杯。", point: "指向", colour_red: "红色", colour_orange: "橙色", colour_yellow: "黄色", colour_green: "绿色", colour_blue: "蓝色", colour_purple: "紫色",
 };
 
 const DICTS: Record<string, Dict> = { it, en, zh };

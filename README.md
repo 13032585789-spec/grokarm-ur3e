@@ -73,6 +73,23 @@ deterministic gate.
 Vision model: `XAI_VISION_MODEL` (default `grok-4.7`; check the exact name in your xAI console).
 `INSPECTOR=mock MOCK_VERDICT=PASS|FAIL|UNSURE` forces the rehearsal inspector.
 
+### Coloured paper cups ("point at the blue cup")
+
+The inspection camera also sees paper cups (red, orange, yellow, green, blue, purple) by HSV colour, with no
+background photo needed. The image is split into the left/middle/right zones (`config/robot.yaml → cups`). Saying
+"point at the blue cup", "指一下蓝色的纸杯" or "indica il bicchiere rosso" makes the gate find the cup's zone and propose
+the existing `indica(zone)` with the taught poses. The operator confirms as usual.
+
+* Two cups of the same colour in different zones: the gate asks which one. A colour that is not visible: it says which
+  colours it does see.
+* Camera panel: **Detect cups** shows the annotated image and a *Point* button for each cup.
+* Set-up: mount the phone/webcam looking down at the table and adjust `zone_cuts` so the lines in the overlay match
+  the tray zones. If the camera faces the robot, reverse `image_zone_order`. Use `roi` to crop out the arm.
+* Rehearsal: `python scripts/fake_camera.py --cups`.
+* Limits: white, grey and black cups are not detected (no colour), and touching cups of one colour merge into one.
+  Precision is one zone. Pointing at an arbitrary XY above a cup needs the calibrated `grokarm_vision` service plus
+  a new bounded Cartesian skill, which is not done yet.
+
 ### Languages
 
 The header language menu switches at runtime: Italiano, English, 中文, Español, Français, Deutsch, 日本語.

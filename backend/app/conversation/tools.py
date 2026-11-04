@@ -49,6 +49,14 @@ def tool_schemas(s: Settings, poses: list[str], *, stretch: bool = True) -> list
          "parameters": {"type": "object", "properties": {}}},
         {"type": "function", "name": "status", "description": "Stato del sistema, del robot e dei vassoi presunti.",
          "parameters": {"type": "object", "properties": {}}},
+        {"type": "function", "name": "point_at_cup",
+         "description": "Indica con la punta il bicchiere di carta del colore detto dall'operatore. Il sistema lo cerca "
+                        "nell'immagine della telecamera, trova la zona e crea un'azione indica in attesa di conferma.",
+         "parameters": {"type": "object", "properties": {"colore": {
+             "type": "string", "enum": ["red", "orange", "yellow", "green", "blue", "purple"]}}, "required": ["colore"]}},
+        {"type": "function", "name": "look_cups",
+         "description": "Elenca i bicchieri colorati che la telecamera vede adesso e in quale zona. Non muove il robot.",
+         "parameters": {"type": "object", "properties": {}}},
         {"type": "function", "name": "start_inspection",
          "description": "Avvia l'ispezione qualità: memorizza la regola e propone di portare il prossimo pezzo dal vassoio di "
                         "ingresso davanti alla telecamera (serve la conferma). Senza regola riusa l'ultima.",
@@ -109,6 +117,11 @@ async def dispatch(gate: Gate, name: str, args: dict[str, Any], *, source: str =
             steps = [{"skill": p.get("skill"), "params": p.get("parametri") or {}} for p in (args.get("passi") or [])
                      if isinstance(p, dict)]
             return gate.propose_sequence(steps, source=source)
+        if name == "point_at_cup":
+            return gate.point_at_cup(args.get("colore") or args.get("colour"), source=source)
+        if name == "look_cups":
+            r = gate.scan_cups()
+            return {k: v for k, v in r.items() if k != "frame_id"}
         if name == "start_inspection":
             return gate.start_inspection(args.get("regola") or args.get("rule"), source=source)
         if name == "save_pose":

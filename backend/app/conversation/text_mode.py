@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..safety.gate import Gate, GateState
-from .rules import Intent, parse, parse_inspection
+from .rules import Intent, parse, parse_cup, parse_inspection
 
 TEXT_MODE_LABEL = "TEXT MODE — NOT VOICE"
 
@@ -29,6 +29,9 @@ class TextConversation:
             return self._out(text, Intent("stop"), "Fermato. Nuovi movimenti bloccati fino a RIPRISTINA.", None)
 
         if g.pending is None:
+            cup = parse_cup(text)
+            if cup is not None:
+                return await self._cup(text, cup)
             insp = parse_inspection(text, holding=g.world.holding_tray)
             if insp is not None:
                 return await self._inspection(text, insp)
@@ -68,6 +71,16 @@ class TextConversation:
             return await self._propose(text, intent)
 
         return self._out(text, intent, "Non ho capito. Puoi ripetere?", None)
+
+    async def _cup(self, text: str, intent: Intent) -> dict[str, Any]:
+        g = self.gate
+        self.context = None
+        res = g.point_at_cup(intent.params["colore"], source="rules")
+        if res.get("ok"):
+            g.mark_question_asked(res["action_id"])
+            return self._out(text, intent, res["frase_conferma"], res)
+        extra = res.get("visti") or res.get("opzioni_valide") or []
+        return self._out(text, intent, res.get("messaggio", "") + (f" ({', '.join(extra)})" if extra else ""), res)
 
     async def _inspection(self, text: str, intent: Intent) -> dict[str, Any]:
         g = self.gate

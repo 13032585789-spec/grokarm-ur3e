@@ -28,7 +28,9 @@ from ..robot.base import COMPLETED, FAILED, NOT_STARTED, STOPPED, UNKNOWN, Execu
 from ..skills.registry import Registry, SkillError, ValidatedAction
 from ..skills.world import WorldModel, joints_close
 from ..vision.inspector import FAIL, PASS, UNSURE, clean_rule
+from ..vision.cups import COLOURS, CupFinder, colour_of
 from ..vision.texts import t as tr
+from ..vision.texts import word
 from . import phrases
 
 log = logging.getLogger("voce.gate")
@@ -126,6 +128,49 @@ class Gate:
 
     def attach_vision(self, camera: Any, inspector: Any) -> None:
         self.camera, self.inspector = camera, inspector
+        self.cups = CupFinder(self.s.zones, dict(self.s.robot.get("cups") or {}),
+                              (self.s.inspection or {}).get("labels"))
+
+    def scan_cups(self) -> dict[str, Any]:
+        """Read-only: which coloured cups the camera sees, and in which zone."""
+        if self.camera is None:
+            return _err("telecamera_non_disponibile", "Telecamera non disponibile.")
+        frame = self.camera.fresh(float((self.s.robot.get("cups") or {}).get("max_frame_age_s", 2.0)))
+        if frame is None:
+            return _err("telecamera_non_disponibile", "Nessuna immagine recente dalla telecamera.")
+        res = self.cups.scan(frame)
+        self.bus.publish("cups", **res)
+        return {"ok": True, **res}
+
+    def point_at_cup(self, colour: Any, *, source: str = "grok") -> dict[str, Any]:
+        """Find the cup of that colour in the camera image and propose `indica` on its zone (needs confirmation)."""
+        b = self._blocked()
+        if b:
+            return b
+        c = str(colour or "").strip().lower()
+        c = c if c in COLOURS else colour_of(c)
+        if c is None:
+            return _err("richiesta_ambigua", "Di che colore è il bicchiere?", param="colore", opzioni_valide=list(COLOURS))
+        scan = self.scan_cups()
+        if not scan.get("ok"):
+            return scan
+        seen = scan["cups"]
+        zones = list(dict.fromkeys(x["zona"] for x in seen if x["colore"] == c))
+        if not zones:
+            return _err("oggetto_non_trovato", f"Non vedo nessun bicchiere {c}.",
+                        visti=[f"{x['colore']} ({x['zona']})" for x in seen])
+        if len(zones) > 1:
+            return _err("richiesta_ambigua", f"Vedo bicchieri {c} in più zone: quale?", param="posizione",
+                        opzioni_valide=zones)
+        res = self.propose("indica", {"posizione": zones[0]}, source=source)
+        if res.get("ok") and self.pending is not None:
+            lang = self.s.lang
+            self.pending.action.conferma = tr("cup_question", lang, colour=word("colour", c, lang),
+                                              zone=word("zone", zones[0], lang))
+            res["frase_conferma"] = self.pending.action.conferma
+            res["bicchiere"] = {"colore": c, "zona": zones[0]}
+            self.publish_state()
+        return res
 
     # ================================================================ infra ===
     def _transition(self, new: GateState, reason: str, **data: Any) -> None:

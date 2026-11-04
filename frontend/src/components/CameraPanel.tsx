@@ -1,13 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../i18n";
-import { pushFrame } from "../services/api";
+import { pointAtCup, pushFrame, scanCups } from "../services/api";
 import type { CameraStatus } from "../services/types";
 
 const PUSH_MS = 400;
 const STORE_KEY = "voce.webcam";
 
-export function CameraPanel({ camera, source }: { camera: CameraStatus | null | undefined; source: "browser" | "url" }) {
+interface SeenCup { colore: string; zona: string }
+
+export function CameraPanel({ camera, source, zoneLabels, canPoint }: { camera: CameraStatus | null | undefined;
+  source: "browser" | "url"; zoneLabels?: Record<string, string>; canPoint: boolean }) {
   const { t } = useT();
+  const [cupsOn, setCupsOn] = useState(false);
+  const [cups, setCups] = useState<SeenCup[] | null>(null);
+  const [scanId, setScanId] = useState(0);
+  useEffect(() => {
+    if (!cupsOn) return;
+    let alive = true;
+    const run = async () => {
+      try {
+        const r = await scanCups();
+        if (!alive) return;
+        if (r.ok) { setCups(r.cups); setScanId(r.frame_id); setErr(""); } else { setCups(null); setErr(r.messaggio ?? ""); }
+      } catch { /* next tick */ }
+    };
+    run();
+    const h = window.setInterval(run, 1000);
+    return () => { alive = false; window.clearInterval(h); };
+  }, [cupsOn]);
+  const point = async (colour: string) => {
+    const r = await pointAtCup(colour).catch((e) => ({ ok: false, messaggio: String(e) }));
+    if (!r.ok) setErr(r.messaggio ?? r.esito ?? "");
+  };
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const timer = useRef<number | null>(null);
@@ -81,10 +105,11 @@ export function CameraPanel({ camera, source }: { camera: CameraStatus | null | 
           {t("cam_age", { age: (age ?? 0).toFixed(1) })}</span>}
       </div>
       <div className="cam-view">
+        {cupsOn && cups && <img className="cups-overlay" src={`/api/vision/cups.jpg?f=${scanId}`} alt={t("cups")} />}
         {source === "browser" ? (
-          <video ref={video} muted playsInline className={on ? "" : "hidden"} />
+          <video ref={video} muted playsInline className={on && !(cupsOn && cups) ? "" : "hidden"} />
         ) : (
-          camera?.frame && <img src={`/api/camera/frame.jpg?t=${tick}`} alt={t("camera")} />
+          camera?.frame && !(cupsOn && cups) && <img src={`/api/camera/frame.jpg?t=${tick}`} alt={t("camera")} />
         )}
         {((source === "browser" && !on) || (source === "url" && !camera?.frame)) &&
           <div className="cam-empty">{source === "url" ? t("cam_url_hint") : t("cam_none")}</div>}
@@ -101,6 +126,22 @@ export function CameraPanel({ camera, source }: { camera: CameraStatus | null | 
           )}
         </div>
       )}
+      <label className="switch cups-switch">
+        <input type="checkbox" checked={cupsOn} onChange={(e) => { setCupsOn(e.target.checked); if (!e.target.checked) setCups(null); }} />
+        <span>{t("cups")}</span>
+      </label>
+      {cupsOn && cups && (cups.length === 0 ? <div className="empty">{t("cups_none")}</div> : (
+        <ul className="cup-list">
+          {cups.map((c, i) => (
+            <li key={i}>
+              <span className={`cup-dot c-${c.colore}`} aria-hidden />
+              <b>{t(`colour_${c.colore}` as any)}</b>
+              <span className="sub">{zoneLabels?.[c.zona] ? `${zoneLabels[c.zona]} · ` : ""}{c.zona}</span>
+              <button disabled={!canPoint} onClick={() => point(c.colore)}>{t("point")}</button>
+            </li>
+          ))}
+        </ul>
+      ))}
       {err && <div className="hint bad">{err}</div>}
       {camera?.error && <div className="hint bad">{camera.error}</div>}
     </section>

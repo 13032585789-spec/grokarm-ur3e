@@ -52,6 +52,10 @@ class LangBody(BaseModel):
     lang: str = Field(..., min_length=2, max_length=5)
 
 
+class CupBody(BaseModel):
+    colour: str = Field(..., min_length=2, max_length=20)
+
+
 class InspectionBody(BaseModel):
     rule: str | None = Field(None, max_length=300)
 
@@ -187,6 +191,24 @@ def create_app(settings: Settings | None = None, adapter=None, inspector=None) -
         if gate.inspection.last_jpeg is None:
             raise HTTPException(404, "no inspection yet")
         return Response(gate.inspection.last_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/vision/cups")
+    async def api_cups() -> JSONResponse:
+        r = gate.scan_cups()
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    @app.post("/api/vision/point")
+    async def api_point_cup(body: CupBody) -> JSONResponse:
+        r = gate.point_at_cup(body.colour, source="ui")
+        if r.get("ok") and r.get("action_id") and not state["voice"] and not state["grok_text"]:
+            gate.mark_question_asked(r["action_id"])
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    @app.get("/api/vision/cups.jpg")
+    async def api_cups_jpg() -> Response:
+        if gate.cups.last_jpeg is None:
+            raise HTTPException(404, "no scan yet")
+        return Response(gate.cups.last_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @app.post("/api/inspection/start")
     async def api_inspection_start(body: InspectionBody) -> JSONResponse:

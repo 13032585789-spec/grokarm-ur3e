@@ -169,3 +169,11 @@ button.primary:hover:not(:disabled) { filter: brightness(1.1); }
 .counts { display: flex; gap: 14px; margin-top: 12px; font-size: 13px; font-family: var(--mono); }
 .counts .v-PASS { color: var(--ok); } .counts .v-FAIL { color: var(--warn); } .counts .v-UNSURE { color: var(--muted); }
 @media (max-width: 640px) { .verdict { grid-template-columns: 1fr; } }
+.cups-switch { margin-top: 10px; display: inline-flex; }
+.cups-overlay { width: 100%; height: 100%; object-fit: contain; }
+.cup-list { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 6px; }
+.cup-list li { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
+.cup-list li button { margin-left: auto; padding: 4px 12px; }
+.cup-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
+.c-red { background: #e5322d; } .c-orange { background: #ff8c1a; } .c-yellow { background: #f2d43d; }
+.c-green { background: #3ccf8e; } .c-blue { background: #3f7bff; } .c-purple { background: #b35cff; }

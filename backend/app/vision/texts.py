@@ -67,6 +67,36 @@ T: dict[str, dict[str, str]] = {
 }
 
 
+T["colour"] = {
+    "red": {"it": "rosso", "en": "red", "zh": "红色", "es": "rojo", "fr": "rouge", "de": "rote", "ja": "赤い"},
+    "orange": {"it": "arancione", "en": "orange", "zh": "橙色", "es": "naranja", "fr": "orange", "de": "orange",
+               "ja": "オレンジの"},
+    "yellow": {"it": "giallo", "en": "yellow", "zh": "黄色", "es": "amarillo", "fr": "jaune", "de": "gelbe", "ja": "黄色い"},
+    "green": {"it": "verde", "en": "green", "zh": "绿色", "es": "verde", "fr": "vert", "de": "grüne", "ja": "緑の"},
+    "blue": {"it": "blu", "en": "blue", "zh": "蓝色", "es": "azul", "fr": "bleu", "de": "blaue", "ja": "青い"},
+    "purple": {"it": "viola", "en": "purple", "zh": "紫色", "es": "morado", "fr": "violet", "de": "lila", "ja": "紫の"},
+}
+T["cup_question"] = {
+    "it": "Vedo il bicchiere {colour} nella zona {zone}. Lo indico con la punta. Confermi?",
+    "en": "I see the {colour} cup in the {zone} zone. I will point at it. Proceed?",
+    "zh": "我看到{colour}的纸杯在{zone}区域，我用指针指向它。确认吗？",
+    "es": "Veo el vaso {colour} en la zona {zone}. Lo señalo con la punta. ¿Confirmas?",
+    "fr": "Je vois le gobelet {colour} dans la zone {zone}. Je le montre avec la pointe. Tu confirmes ?",
+    "de": "Ich sehe den {colour} Becher in Zone {zone}. Ich zeige mit der Spitze darauf. Bestätigst du?",
+    "ja": "{colour}紙コップが{zone}ゾーンに見えます。先端で指します。よろしいですか？",
+}
+T["zone"] = {
+    "sinistra": {"it": "sinistra", "en": "left", "zh": "左边", "es": "izquierda", "fr": "gauche", "de": "links", "ja": "左"},
+    "centro": {"it": "centro", "en": "middle", "zh": "中间", "es": "centro", "fr": "centre", "de": "Mitte", "ja": "中央"},
+    "destra": {"it": "destra", "en": "right", "zh": "右边", "es": "derecha", "fr": "droite", "de": "rechts", "ja": "右"},
+}
+
+
+def word(table: str, key: str, lang: str) -> str:
+    row = T[table].get(key)
+    return key if row is None else row.get(lang, row["en"])
+
+
 def t(key: str, lang: str, **kw: object) -> str:
     table = T[key]
     return table.get(lang, table["en"]).format(**kw)
