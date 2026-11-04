@@ -631,6 +631,10 @@ class Gate:
                     "istruzione": "Il pezzo è già davanti alla telecamera: di' solo 'Analizzo.' L'esito arriverà in "
                                   "un [RAPPORTO SISTEMA]."}
         res = self.propose("porta_in_ispezione", {"posizione": insp["input_zone"]}, source=source)
+        if res.get("ok") and self.pending is not None:
+            self.pending.action.conferma = tr("bring", self.s.lang, tray=self.s.zone_label(insp["input_zone"]))
+            res["frase_conferma"] = self.pending.action.conferma
+            self.publish_state()
         res["regola"] = rule
         return res
 

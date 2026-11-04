@@ -71,7 +71,7 @@ async def test_full_cycle_fail_goes_to_tray_c(qa):
     gate, rec = qa
     r = gate.start_inspection(RULE)
     assert r["ok"] and r["skill"] == "porta_in_ispezione" and r["parametri"] == {"posizione": "sinistra"}
-    assert "A (sinistra)" in r["frase_conferma"] and gate.state == GateState.PENDING_CONFIRMATION
+    assert "vassoio A" in r["frase_conferma"] and gate.state == GateState.PENDING_CONFIRMATION
     assert (await confirm_pending(gate, "Sì, procedi."))["ok"]
     assert await wait_for(lambda: gate.pending is not None and gate.pending.action.skill == "smista")
     assert rec.calls and rec.calls[0][1] == RULE
@@ -90,7 +90,7 @@ async def test_pass_goes_to_tray_b_and_localised(qa):
     gate, rec = qa
     rec.status, rec.reason = PASS, "无缺陷。"
     gate.s.lang = "zh"
-    gate.start_inspection("有划痕的不合格")
+    assert gate.start_inspection("有划痕的不合格")["frase_conferma"].startswith("我将从 A 托盘")
     await confirm_pending(gate, "是的")
     assert await wait_for(lambda: gate.pending is not None and gate.pending.action.skill == "smista")
     assert gate.pending.action.params == {"posizione": "centro"}

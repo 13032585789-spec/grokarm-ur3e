@@ -7,6 +7,15 @@ T: dict[str, dict[str, str]] = {
                      "ja": "合格"},
     "verdict_FAIL": {"it": "SCARTATO", "en": "FAIL", "zh": "不合格", "es": "RECHAZADO", "fr": "NON CONFORME",
                      "de": "FEHLERHAFT", "ja": "不合格"},
+    "bring": {
+        "it": "Prelevo il pezzo dal vassoio {tray} e lo porto davanti alla telecamera. Confermi?",
+        "en": "I will pick the part from tray {tray} and bring it to the camera. Proceed?",
+        "zh": "我将从 {tray} 托盘取出零件并送到相机前。确认吗？",
+        "es": "Tomo la pieza de la bandeja {tray} y la llevo a la cámara. ¿Confirmas?",
+        "fr": "Je prends la pièce du bac {tray} et je l'amène devant la caméra. Tu confirmes ?",
+        "de": "Ich nehme das Teil aus Schale {tray} und bringe es zur Kamera. Bestätigst du?",
+        "ja": "トレイ{tray}から部品を取り、カメラの前に運びます。よろしいですか？",
+    },
     "question": {
         "it": "Ispezione completata. Esito: {verdict}. {reason} Lo deposito nel vassoio {tray}. Confermi?",
         "en": "Inspection complete. Result: {verdict}. {reason} I will place it in tray {tray}. Proceed?",
