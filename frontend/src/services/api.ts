@@ -26,3 +26,20 @@ export async function textCommand(text: string, engine: "rules" | "grok"): Promi
 export async function fetchEval(): Promise<any> {
   return (await fetch("/api/eval/latest")).json();
 }
+
+async function post(url: string, body?: unknown): Promise<any> {
+  const r = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (r.status >= 500) throw new Error(data.detail ?? r.statusText);
+  return data;
+}
+
+export const setLanguage = (lang: string) => post("/api/language", { lang });
+export const startInspection = (rule: string) => post("/api/inspection/start", { rule: rule || null });
+export const partReady = () => post("/api/world/part-ready");
+
+export async function pushFrame(jpeg: Blob): Promise<void> {
+  await fetch("/api/camera/frame", { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: jpeg });
+}

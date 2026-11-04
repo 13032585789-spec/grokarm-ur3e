@@ -86,12 +86,23 @@ def test_config_rejects_missing_pose(cfg_dir, tmp_path):
         load_settings("sim", config_dir=cfg_dir, data_dir=tmp_path, env_file=None)
 
 
-def test_real_mode_requires_explicit_config(cfg_dir, tmp_path):
+def test_real_mode_requires_staff_phrase(cfg_dir, tmp_path, monkeypatch):
+    monkeypatch.delenv("ALLOW_REAL_MOTION", raising=False)
+    with pytest.raises(ConfigError, match="STAFF_APPROVED"):
+        load_settings("real", config_dir=cfg_dir, data_dir=tmp_path, env_file=None)
+    monkeypatch.setenv("ALLOW_REAL_MOTION", "yes")
+    with pytest.raises(ConfigError, match="STAFF_APPROVED"):
+        load_settings("real", config_dir=cfg_dir, data_dir=tmp_path, env_file=None)
+
+
+def test_real_mode_requires_explicit_config(cfg_dir, tmp_path, monkeypatch):
+    monkeypatch.setenv("ALLOW_REAL_MOTION", "STAFF_APPROVED")
     with pytest.raises(ConfigError, match="explicit"):
         load_settings("real", config_dir=cfg_dir, data_dir=tmp_path, env_file=None)
 
 
-def test_real_mode_refuses_unverified_poses(cfg_dir, tmp_path):
+def test_real_mode_refuses_unverified_poses(cfg_dir, tmp_path, monkeypatch):
+    monkeypatch.setenv("ALLOW_REAL_MOTION", "STAFF_APPROVED")
     p = cfg_dir / "robot.yaml"
     d = yaml.safe_load(p.read_text())
     d["connections"]["real"].update(enabled=True, host="10.0.0.3")

@@ -1,4 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CameraPanel } from "./components/CameraPanel";
+import { InspectionPanel } from "./components/InspectionPanel";
+import { LangContext, makeT } from "./i18n";
+import { setLanguage } from "./services/api";
 import { ActionPanel } from "./components/ActionPanel";
 import { Conversation } from "./components/Conversation";
 import { Header } from "./components/Header";
@@ -30,13 +34,20 @@ export default function App() {
 
   const ui = deriveUiState(store, voiceState);
   const s = store.status;
+  const lang = s?.lang ?? store.config?.lang ?? "it";
+  const ctx = useMemo(() => ({ lang, t: makeT(lang) }), [lang]);
+  const { t } = ctx;
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
+  const insp = store.config?.inspection;
   return (
+    <LangContext.Provider value={ctx}>
     <div className={`app ui-${ui}`}>
-      <Header ui={ui} config={store.config} robot={s?.robot} voice={voiceState === "off" ? "off" : store.voice} />
+      <Header ui={ui} config={store.config} robot={s?.robot} voice={voiceState === "off" ? "off" : store.voice}
+        onLang={(l) => { setLanguage(l).catch(() => undefined); }} />
       {store.textMode && <div className="global-textmode">TEXT MODE — NOT VOICE</div>}
       <nav className="tabs">
-        <button className={tab === "control" ? "on" : ""} onClick={() => setTab("control")}>Controllo</button>
-        <button className={tab === "eval" ? "on" : ""} onClick={() => setTab("eval")}>Valutazione</button>
+        <button className={tab === "control" ? "on" : ""} onClick={() => setTab("control")}>{t("tab_control")}</button>
+        <button className={tab === "eval" ? "on" : ""} onClick={() => setTab("eval")}>{t("tab_eval")}</button>
       </nav>
       {tab === "control" ? (
         <main className="grid">
@@ -48,7 +59,9 @@ export default function App() {
               grokAvailable={!!store.config?.grok_configured} />
           </div>
           <div className="col">
-            <RobotPanel status={s} layout={store.layout} joints={store.joints} />
+            <InspectionPanel status={s} config={store.config} />
+            <CameraPanel camera={s?.camera} source={store.config?.camera_source ?? "browser"} />
+            <RobotPanel status={s} layout={store.layout} joints={store.joints} zoneLabels={insp?.labels} />
             <History items={s?.history ?? []} />
             <Metrics metrics={s?.metrics ?? {}} />
           </div>
@@ -58,5 +71,6 @@ export default function App() {
       )}
       <StopBar status={s} onStopped={() => voice.current?.flush()} />
     </div>
+    </LangContext.Provider>
   );
 }

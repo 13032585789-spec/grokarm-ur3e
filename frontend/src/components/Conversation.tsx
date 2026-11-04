@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import { useT } from "../i18n";
 import { textCommand } from "../services/api";
 import type { ChatLine } from "../services/types";
 
 export function Conversation({ chat, textMode, setTextMode, grokAvailable }: {
   chat: ChatLine[]; textMode: boolean; setTextMode: (on: boolean) => void; grokAvailable: boolean;
 }) {
+  const { t } = useT();
   const box = useRef<HTMLDivElement>(null);
   const [text, setText] = useState("");
   const [engine, setEngine] = useState<"rules" | "grok">("rules");
@@ -22,14 +24,14 @@ export function Conversation({ chat, textMode, setTextMode, grokAvailable }: {
   return (
     <section className="card conv">
       <div className="card-head">
-        <h2>Conversazione</h2>
+        <h2>{t("conv")}</h2>
         <label className="switch">
           <input type="checkbox" checked={textMode} onChange={(e) => setTextMode(e.target.checked)} />
-          <span>Modalità testo</span>
+          <span>{t("text_mode")}</span>
         </label>
       </div>
       <div className="chat" ref={box} aria-live="polite">
-        {chat.length === 0 && <div className="empty">Avvia l'assistente e prova: «Solleva il vassoio a sinistra».</div>}
+        {chat.length === 0 && <div className="empty">{t("conv_empty")}</div>}
         {chat.map((l) => (
           <div key={l.id} className={`line ${l.role} ${l.final ? "" : "partial"} ${l.kind ?? ""} ${l.source?.startsWith("TEXT") || l.source === "text" ? "textsrc" : ""}`}>
             {l.role === "system" ? <span className="sys">{l.text}</span> : l.text}
@@ -38,14 +40,14 @@ export function Conversation({ chat, textMode, setTextMode, grokAvailable }: {
       </div>
       {textMode && (
         <div className="textmode">
-          <div className="textmode-banner">TEXT MODE — NOT VOICE · solo sviluppo e valutazione</div>
+          <div className="textmode-banner">{t("text_banner")}</div>
           <form onSubmit={send}>
-            <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Scrivi un comando…" maxLength={300} />
+            <input value={text} onChange={(e) => setText(e.target.value)} placeholder={t("text_ph")} maxLength={300} />
             <select value={engine} onChange={(e) => setEngine(e.target.value as any)}>
-              <option value="rules">regole</option>
-              <option value="grok" disabled={!grokAvailable}>Grok (testo)</option>
+              <option value="rules">{t("rules")}</option>
+              <option value="grok" disabled={!grokAvailable}>{t("grok_text")}</option>
             </select>
-            <button type="submit">Invia</button>
+            <button type="submit">{t("send")}</button>
           </form>
           {err && <div className="hint bad">{err}</div>}
         </div>

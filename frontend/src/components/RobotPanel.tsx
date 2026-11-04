@@ -1,8 +1,10 @@
+import { useT } from "../i18n";
 import type { Layout, Status } from "../services/types";
 
 // Schematic top view: base-joint angle only (not a kinematic rendering).
-function TopView({ layout, joints, trays, holding }: { layout: Layout; joints: number[] | null; trays: string[];
-  holding: boolean }) {
+function TopView({ layout, joints, trays, holding, labels }: { layout: Layout; joints: number[] | null; trays: string[];
+  holding: boolean; labels: Record<string, string> }) {
+  const { t } = useT();
   const W = 320, H = 190, cx = W / 2, cy = H - 18, R = 140;
   const zones = Object.entries(layout.zones);
   // map base angle so the zone fan is centred and spread over ±70°
@@ -21,8 +23,8 @@ function TopView({ layout, joints, trays, holding }: { layout: Layout; joints: n
         return (
           <g key={z}>
             <rect x={x - 30} y={y - 16} width={60} height={32} rx={6} className={`zone ${has ? "has" : ""}`} />
-            <text x={x} y={y + 30} className="zone-label">{z}</text>
-            {has && <text x={x} y={y + 5} className="tray-label">vassoio</text>}
+            <text x={x} y={y + 30} className="zone-label">{labels[z] ? `${labels[z]} · ${z}` : z}</text>
+            {has && <text x={x} y={y + 5} className="tray-label">{t("tray")}</text>}
           </g>
         );
       })}
@@ -40,7 +42,9 @@ function TopView({ layout, joints, trays, holding }: { layout: Layout; joints: n
   );
 }
 
-export function RobotPanel({ status, layout, joints }: { status: Status | null; layout: Layout | null; joints: number[] | null }) {
+export function RobotPanel({ status, layout, joints, zoneLabels }: { status: Status | null; layout: Layout | null;
+  joints: number[] | null; zoneLabels?: Record<string, string> }) {
+  const { t } = useT();
   if (!status) return null;
   const r = status.robot;
   const w = status.world;
@@ -48,21 +52,21 @@ export function RobotPanel({ status, layout, joints }: { status: Status | null; 
   return (
     <section className="card robot">
       <h2>Robot <span className="sub">{status.robot_adapter}</span></h2>
-      {layout && <TopView layout={layout} joints={q} trays={w.oggetti_presunti.vassoi_in_zona} holding={w.oggetti_presunti.vassoio_sulla_forca} />}
+      {layout && <TopView layout={layout} joints={q} trays={w.oggetti_presunti.vassoi_in_zona} holding={w.oggetti_presunti.vassoio_sulla_forca} labels={zoneLabels ?? {}} />}
       <div className="kv">
-        <div><span>Posa nota</span><b>{w.robot_verificato.posa_nota ?? "—"}</b></div>
-        <div><span>Modo</span><b>{r.robot_mode ?? "—"}</b></div>
-        <div><span>Sicurezza</span><b className={r.safety && r.safety !== "NORMAL" ? "bad" : ""}>{r.safety ?? "—"}</b></div>
-        <div><span>Programma</span><b>{r.program ?? "—"}</b></div>
-        {r.remote_control !== null && <div><span>Remote Control</span><b>{r.remote_control ? "sì" : "no"}</b></div>}
-        <div><span>Giunti (rad)</span><b className="mono">{q ? q.map((x) => x.toFixed(2)).join("  ") : "—"}</b></div>
+        <div><span>{t("known_pose")}</span><b>{w.robot_verificato.posa_nota ?? "—"}</b></div>
+        <div><span>{t("mode")}</span><b>{r.robot_mode ?? "—"}</b></div>
+        <div><span>{t("safety")}</span><b className={r.safety && r.safety !== "NORMAL" ? "bad" : ""}>{r.safety ?? "—"}</b></div>
+        <div><span>{t("program")}</span><b>{r.program ?? "—"}</b></div>
+        {r.remote_control !== null && <div><span>Remote Control</span><b>{r.remote_control ? t("yes") : t("no")}</b></div>}
+        <div><span>{t("joints")}</span><b className="mono">{q ? q.map((x) => x.toFixed(2)).join("  ") : "—"}</b></div>
       </div>
-      <h3>Vassoi <span className="sub">presunti · nessuna telecamera</span></h3>
+      <h3>{t("trays")} <span className="sub">{t("trays_sub")}</span></h3>
       <div className="kv">
-        <div><span>In zona</span><b>{w.oggetti_presunti.vassoi_in_zona.join(", ") || "nessuno"}</b></div>
-        <div><span>Sulla forca</span><b>{w.oggetti_presunti.vassoio_sulla_forca ? "sì (presunto)" : "no"}</b></div>
+        <div><span>{t("in_zone")}</span><b>{w.oggetti_presunti.vassoi_in_zona.map((z) => (zoneLabels?.[z] ? `${zoneLabels[z]} (${z})` : z)).join(", ") || t("none")}</b></div>
+        <div><span>{t("on_fork")}</span><b>{w.oggetti_presunti.vassoio_sulla_forca ? t("yes_assumed") : t("no")}</b></div>
       </div>
-      {status.fault && <div className="fault-box">GUASTO: {status.fault}</div>}
+      {status.fault && <div className="fault-box">{t("fault")}: {status.fault}</div>}
     </section>
   );
 }

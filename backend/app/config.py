@@ -21,6 +21,7 @@ MODES = ("sim", "ursim", "real")
 LANGUAGES = {"it": "italiano", "en": "English", "zh": "中文", "es": "español", "fr": "français", "de": "Deutsch",
              "ja": "日本語"}
 CAMERA_SOURCES = ("browser", "url")
+REAL_MOTION_PHRASE = "STAFF_APPROVED"
 
 
 class ConfigError(Exception):
@@ -195,6 +196,9 @@ def validate(s: Settings) -> None:
                     raise ConfigError(f"skill {sid}: sequence references missing pose {pose!r}")
 
     if s.mode == "real":
+        if os.getenv("ALLOW_REAL_MOTION", "") != REAL_MOTION_PHRASE:
+            raise ConfigError(f"ROBOT_MODE=real requires ALLOW_REAL_MOTION={REAL_MOTION_PHRASE}, set only with lab staff "
+                              "present and a hand near the E-stop")
         real = s.robot["connections"]["real"]
         if not real.get("enabled") or not real.get("host"):
             raise ConfigError("ROBOT_MODE=real requires connections.real.enabled: true and connections.real.host "

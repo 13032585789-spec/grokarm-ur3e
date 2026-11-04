@@ -1,27 +1,30 @@
 import { useEffect, useState } from "react";
 import { fetchEval, resetSystem, stopRobot } from "../services/api";
+import { useT } from "../i18n";
 import type { HistoryItem, MetricSummary, Status } from "../services/types";
 
 const KIND: Record<string, string> = {
   proposta: "Proposta", confermata: "Confermata", completata: "Completata", annullata: "Annullata", scaduta: "Scaduta",
   stop: "STOP", interrotta: "Interrotta", guasto: "Guasto", ripristino: "Ripristino", conferma_rifiutata: "Conferma rifiutata",
-  non_eseguita: "Non eseguita", posa_salvata: "Posa salvata",
+  non_eseguita: "Non eseguita", posa_salvata: "Posa salvata", ispezione: "Ispezione", regola_ispezione: "Regola",
+  pezzo_pronto: "Pezzo pronto",
 };
 
 export function History({ items }: { items: HistoryItem[] }) {
+  const { lang, t } = useT();
   const shown = items.filter((h) => h.kind !== "utterance").slice(0, 14);
   return (
     <section className="card history">
-      <h2>Storico azioni</h2>
-      {shown.length === 0 ? <div className="empty">Ancora nessuna azione.</div> : (
+      <h2>{t("history")}</h2>
+      {shown.length === 0 ? <div className="empty">{t("no_history")}</div> : (
         <ul>
           {shown.map((h, i) => (
             <li key={i} className={`h-${h.kind}`}>
-              <time>{new Date(h.ts * 1000).toLocaleTimeString("it-IT")}</time>
+              <time>{new Date(h.ts * 1000).toLocaleTimeString(lang)}</time>
               <b>{KIND[h.kind] ?? h.kind}</b>
               <span>
                 {[h.skill as string, h.params ? Object.values(h.params as object).join(" ") : "", h.source as string,
-                  h.text ? `«${h.text}»` : "", h.reason as string, h.ack_ms ? `${h.ack_ms} ms` : ""].filter(Boolean).join(" · ")}
+                  h.text ? `«${h.text}»` : "", h.status as string, h.reason as string, h.rule ? `«${h.rule}»` : "", h.ack_ms ? `${h.ack_ms} ms` : ""].filter(Boolean).join(" · ")}
               </span>
             </li>
           ))}
@@ -46,13 +49,14 @@ const METRIC_IT: Record<string, string> = {
 };
 
 export function Metrics({ metrics }: { metrics: Record<string, MetricSummary> }) {
+  const { t } = useT();
   const rows = Object.entries(metrics);
   return (
     <section className="card metrics">
-      <h2>Latenze <span className="sub">questa sessione</span></h2>
-      {rows.length === 0 ? <div className="empty">Nessuna misura ancora.</div> : (
+      <h2>{t("latency")} <span className="sub">{t("this_session")}</span></h2>
+      {rows.length === 0 ? <div className="empty">{t("no_metrics")}</div> : (
         <table>
-          <thead><tr><th>Misura</th><th>n</th><th>mediana</th><th>max</th></tr></thead>
+          <thead><tr><th>{t("measure")}</th><th>n</th><th>{t("median")}</th><th>max</th></tr></thead>
           <tbody>
             {rows.map(([k, m]) => (
               <tr key={k}><td>{METRIC_IT[k] ?? k}</td><td>{m.n}</td><td>{m.median_ms} ms</td><td>{m.max_ms} ms</td></tr>
@@ -65,11 +69,12 @@ export function Metrics({ metrics }: { metrics: Record<string, MetricSummary> })
 }
 
 export function StopBar({ status, onStopped }: { status: Status | null; onStopped: () => void }) {
+  const { t } = useT();
   const [msg, setMsg] = useState("");
   const needsReset = status?.gate === "STOPPED" || status?.gate === "FAULT";
   const doStop = async (src: "button" | "space") => {
     onStopped();
-    try { await stopRobot(src); } catch (e: any) { setMsg(`STOP non inviato: ${e.message}`); }
+    try { await stopRobot(src); } catch (e: any) { setMsg(`${t("stop_failed")}: ${e.message}`); }
   };
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -80,20 +85,20 @@ export function StopBar({ status, onStopped }: { status: Status | null; onStoppe
     return () => window.removeEventListener("keydown", h);
   });
   const reset = async () => {
-    if (!window.confirm("Ripristinare il sistema? Verifica che l'area di lavoro sia sicura.")) return;
+    if (!window.confirm(t("reset_q"))) return;
     const r = await resetSystem();
-    setMsg(r.ok ? "" : r.messaggio ?? "Ripristino rifiutato");
+    setMsg(r.ok ? "" : r.messaggio ?? t("reset_refused"));
   };
   return (
     <div className="stopbar">
       {needsReset && (
-        <button className="reset" onClick={reset}>RIPRISTINA</button>
+        <button className="reset" onClick={reset}>{t("reset")}</button>
       )}
       <button className="stop" onClick={() => doStop("button")} title="Barra spaziatrice">
-        STOP <small>spazio</small>
+        STOP <small>{t("stop_space")}</small>
       </button>
       {msg && <div className="stop-msg">{msg}</div>}
-      <div className="disclaimer">STOP software: non è un arresto di emergenza certificato. Usare il pulsante di emergenza fisico del robot.</div>
+      <div className="disclaimer">{t("disclaimer")}</div>
     </div>
   );
 }

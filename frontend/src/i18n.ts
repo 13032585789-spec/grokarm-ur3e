@@ -1,0 +1,161 @@
+import { createContext, useContext } from "react";
+
+export const LANGS: { code: string; label: string }[] = [
+  { code: "it", label: "Italiano" }, { code: "en", label: "English" }, { code: "zh", label: "中文" },
+  { code: "es", label: "Español" }, { code: "fr", label: "Français" }, { code: "de", label: "Deutsch" },
+  { code: "ja", label: "日本語" },
+];
+
+const it = {
+  tagline: "Parla naturalmente. Il robot capisce. Tu confermi.",
+  mode_real: "ROBOT REALE", mode_ursim: "SIMULAZIONE · URSim", mode_sim: "SIMULAZIONE · interna",
+  grok: "Grok Voice", robot: "Robot", not_configured: "non configurato", connected: "connesso", reconnecting: "riconnessione…",
+  error: "errore", idle: "inattivo", not_connected: "non connesso", moving: "in movimento", language: "Lingua",
+  st_DISCONNECTED: "DISCONNESSO", st_READY: "PRONTO", st_LISTENING: "IN ASCOLTO", st_PROCESSING: "ELABORAZIONE",
+  st_CLARIFICATION: "CHIARIMENTO", st_AWAITING_CONFIRMATION: "ATTESA CONFERMA", st_EXECUTING: "IN ESECUZIONE",
+  st_COMPLETED: "COMPLETATO", st_STOPPED: "FERMO", st_FAULT: "GUASTO", st_RECONNECTING: "RICONNESSIONE",
+  tab_control: "Controllo", tab_eval: "Valutazione",
+  mic_start: "AVVIA ASSISTENTE VOCALE", mic_starting: "AVVIO…", mic_paused: "Microfono in pausa",
+  mic_reconnecting: "Riconnessione a Grok…", mic_live: "Microfono attivo · parla in {lang}", mic_resume: "Riprendi microfono",
+  mic_pause: "Pausa microfono", mic_close: "Chiudi sessione vocale",
+  mic_no_grok: "Grok non configurato: disponibile solo la modalità testo.", mic_error: "Errore del microfono",
+  conv: "Conversazione", text_mode: "Modalità testo",
+  conv_empty: "Avvia l'assistente e prova: «Inizia l'ispezione sul vassoio A, scarta i pezzi con graffi».",
+  text_banner: "TEXT MODE — NOT VOICE · comandi scritti, stesse regole di sicurezza", text_ph: "Scrivi un comando…",
+  rules: "regole", grok_text: "Grok (testo)", send: "Invia",
+  action: "Azione", step: "passo", tool: "strumento", answer_hint: "Rispondi: «Sì, confermo» oppure «No».",
+  waiting_question: " (in attesa della domanda)", to_confirm: "s per confermare", executing: "In esecuzione",
+  move_done: "Movimento {done}/{total} completato", move_started: "Movimento avviato", say_stop: "di' «stop» per fermare",
+  last_result: "Ultimo risultato", moves: "movimenti", no_action: "Nessuna azione in attesa.",
+  out_completed: "completato", out_stopped: "interrotto da STOP", out_not_started: "non eseguito", out_failed: "fallito",
+  out_unknown: "esito sconosciuto",
+  history: "Storico azioni", no_history: "Ancora nessuna azione.", latency: "Latenze", this_session: "questa sessione",
+  no_metrics: "Nessuna misura ancora.", measure: "Misura", median: "mediana",
+  reset: "RIPRISTINA", reset_q: "Ripristinare il sistema? Verifica che l'area di lavoro sia sicura.",
+  reset_refused: "Ripristino rifiutato", stop_space: "spazio", stop_failed: "STOP non inviato",
+  disclaimer: "STOP software: non è un arresto di emergenza certificato. Usare il pulsante di emergenza fisico del robot.",
+  known_pose: "Posa nota", mode: "Modo", safety: "Sicurezza", program: "Programma", joints: "Giunti (rad)", yes: "sì", no: "no",
+  trays: "Vassoi", trays_sub: "presunti · nessun sensore", in_zone: "In zona", on_fork: "Sulla forca",
+  yes_assumed: "sì (presunto)", none: "nessuno", fault: "GUASTO", tray: "vassoio",
+  camera: "Telecamera di ispezione", cam_browser: "webcam di questo computer", cam_url: "URL snapshot",
+  cam_start: "Accendi webcam", cam_stop: "Spegni webcam", cam_device: "Dispositivo", cam_none: "Nessuna immagine ancora.",
+  cam_age: "ultimo fotogramma {age} s fa", cam_denied: "Accesso alla webcam negato o non disponibile",
+  cam_url_hint: "Le immagini arrivano dall'URL configurato (CAMERA_URL).",
+  inspection: "Ispezione qualità", rule: "Regola", rule_ph: "es. Scarta i pezzi con graffi o anomalie",
+  start_inspection: "Avvia ispezione", part_ready: "Pezzo pronto nel vassoio {tray}", analysing: "Analisi in corso…",
+  last_inspection: "Ultimo esito", counts: "Conteggi", flow: "{a} ingresso → telecamera → {b} approvati / {c} scartati",
+  inspector_mock: "ispettore simulato (nessuna chiave xAI)", inspector_grok: "Grok Vision",
+  no_inspection: "Nessuna ispezione ancora. Dì: «Inizia l'ispezione sul vassoio A, scarta i pezzi con graffi».",
+  status_PASS: "APPROVATO", status_FAIL: "SCARTATO", status_UNSURE: "INCERTO", status_NO_FRAME: "NESSUNA IMMAGINE",
+  sk_vai_a_posa: "Vai a posa", sk_indica: "Indica", sk_solleva_vassoio: "Solleva vassoio",
+  sk_appoggia_vassoio: "Appoggia vassoio", sk_spingi: "Spingi", sk_porta_in_ispezione: "Porta in ispezione",
+  sk_smista: "Smista nel vassoio",
+};
+type Dict = typeof it;
+
+const en: Dict = {
+  tagline: "Speak naturally. The robot understands. You confirm.",
+  mode_real: "REAL ROBOT", mode_ursim: "SIMULATION · URSim", mode_sim: "SIMULATION · internal",
+  grok: "Grok Voice", robot: "Robot", not_configured: "not configured", connected: "connected", reconnecting: "reconnecting…",
+  error: "error", idle: "idle", not_connected: "not connected", moving: "moving", language: "Language",
+  st_DISCONNECTED: "DISCONNECTED", st_READY: "READY", st_LISTENING: "LISTENING", st_PROCESSING: "PROCESSING",
+  st_CLARIFICATION: "CLARIFYING", st_AWAITING_CONFIRMATION: "AWAITING CONFIRMATION", st_EXECUTING: "EXECUTING",
+  st_COMPLETED: "COMPLETED", st_STOPPED: "STOPPED", st_FAULT: "FAULT", st_RECONNECTING: "RECONNECTING",
+  tab_control: "Control", tab_eval: "Evaluation",
+  mic_start: "START VOICE ASSISTANT", mic_starting: "STARTING…", mic_paused: "Microphone paused",
+  mic_reconnecting: "Reconnecting to Grok…", mic_live: "Microphone live · speak {lang}", mic_resume: "Resume microphone",
+  mic_pause: "Pause microphone", mic_close: "Close voice session",
+  mic_no_grok: "Grok is not configured: only text mode is available.", mic_error: "Microphone error",
+  conv: "Conversation", text_mode: "Text mode",
+  conv_empty: "Start the assistant and try: “Begin inspection on Tray A. Reject items with scratches or anomalies.”",
+  text_banner: "TEXT MODE — NOT VOICE · typed commands, same safety rules", text_ph: "Type a command…",
+  rules: "rules", grok_text: "Grok (text)", send: "Send",
+  action: "Action", step: "step", tool: "tool", answer_hint: "Answer: “Yes, go ahead” or “No”.",
+  waiting_question: " (waiting for the question)", to_confirm: "s to confirm", executing: "Executing",
+  move_done: "Move {done}/{total} done", move_started: "Motion started", say_stop: "say “stop” to halt",
+  last_result: "Last result", moves: "moves", no_action: "No action pending.",
+  out_completed: "completed", out_stopped: "interrupted by STOP", out_not_started: "not executed", out_failed: "failed",
+  out_unknown: "unknown outcome",
+  history: "Action history", no_history: "No actions yet.", latency: "Latency", this_session: "this session",
+  no_metrics: "No measurements yet.", measure: "Measure", median: "median",
+  reset: "RESET", reset_q: "Reset the system? Make sure the work area is safe.", reset_refused: "Reset refused",
+  stop_space: "space", stop_failed: "STOP not sent",
+  disclaimer: "Software STOP: not a certified emergency stop. Use the robot's physical emergency button.",
+  known_pose: "Known pose", mode: "Mode", safety: "Safety", program: "Program", joints: "Joints (rad)", yes: "yes", no: "no",
+  trays: "Trays", trays_sub: "assumed · no tray sensor", in_zone: "In zone", on_fork: "On the fork",
+  yes_assumed: "yes (assumed)", none: "none", fault: "FAULT", tray: "tray",
+  camera: "Inspection camera", cam_browser: "this computer's webcam", cam_url: "snapshot URL",
+  cam_start: "Turn webcam on", cam_stop: "Turn webcam off", cam_device: "Device", cam_none: "No image yet.",
+  cam_age: "last frame {age} s ago", cam_denied: "Webcam access denied or unavailable",
+  cam_url_hint: "Frames come from the configured URL (CAMERA_URL).",
+  inspection: "Quality inspection", rule: "Rule", rule_ph: "e.g. Reject items with scratches or anomalies",
+  start_inspection: "Start inspection", part_ready: "Part ready in tray {tray}", analysing: "Analysing…",
+  last_inspection: "Last result", counts: "Counts", flow: "{a} input → camera → {b} approved / {c} rejected",
+  inspector_mock: "simulated inspector (no xAI key)", inspector_grok: "Grok Vision",
+  no_inspection: "No inspection yet. Say: “Begin inspection on Tray A. Reject items with scratches or anomalies.”",
+  status_PASS: "PASS", status_FAIL: "FAIL", status_UNSURE: "UNSURE", status_NO_FRAME: "NO IMAGE",
+  sk_vai_a_posa: "Go to pose", sk_indica: "Point", sk_solleva_vassoio: "Lift tray", sk_appoggia_vassoio: "Put tray down",
+  sk_spingi: "Push", sk_porta_in_ispezione: "Bring to camera", sk_smista: "Sort into tray",
+};
+
+const zh: Dict = {
+  tagline: "自然地说话，机器人理解，由你确认。",
+  mode_real: "真实机器人", mode_ursim: "仿真 · URSim", mode_sim: "仿真 · 内置",
+  grok: "Grok 语音", robot: "机器人", not_configured: "未配置", connected: "已连接", reconnecting: "重新连接中…",
+  error: "错误", idle: "空闲", not_connected: "未连接", moving: "运动中", language: "语言",
+  st_DISCONNECTED: "未连接", st_READY: "就绪", st_LISTENING: "聆听中", st_PROCESSING: "处理中", st_CLARIFICATION: "需要澄清",
+  st_AWAITING_CONFIRMATION: "等待确认", st_EXECUTING: "执行中", st_COMPLETED: "已完成", st_STOPPED: "已停止",
+  st_FAULT: "故障", st_RECONNECTING: "重新连接",
+  tab_control: "控制", tab_eval: "评测",
+  mic_start: "启动语音助手", mic_starting: "启动中…", mic_paused: "麦克风已暂停", mic_reconnecting: "正在重新连接 Grok…",
+  mic_live: "麦克风已开启 · 请说{lang}", mic_resume: "恢复麦克风", mic_pause: "暂停麦克风", mic_close: "关闭语音会话",
+  mic_no_grok: "未配置 Grok：只能使用文字模式。", mic_error: "麦克风错误",
+  conv: "对话", text_mode: "文字模式",
+  conv_empty: "启动助手后试试：“开始检测 A 托盘，有划痕或异常的判为不合格”。",
+  text_banner: "文字模式 — 非语音 · 输入的指令同样经过安全确认", text_ph: "输入指令…",
+  rules: "规则", grok_text: "Grok（文字）", send: "发送",
+  action: "动作", step: "步骤", tool: "工具", answer_hint: "请回答：“是的，确认” 或 “不”。",
+  waiting_question: "（等待提问）", to_confirm: "秒内确认", executing: "执行中",
+  move_done: "已完成第 {done}/{total} 段运动", move_started: "运动已开始", say_stop: "说“停”即可停止",
+  last_result: "上次结果", moves: "段运动", no_action: "没有待确认的动作。",
+  out_completed: "完成", out_stopped: "被 STOP 中断", out_not_started: "未执行", out_failed: "失败", out_unknown: "结果未知",
+  history: "动作记录", no_history: "还没有动作。", latency: "延迟", this_session: "本次会话", no_metrics: "还没有测量数据。",
+  measure: "测量项", median: "中位数",
+  reset: "复位", reset_q: "确定复位系统？请确认工作区域安全。", reset_refused: "复位被拒绝", stop_space: "空格",
+  stop_failed: "STOP 未发送",
+  disclaimer: "软件 STOP 不是经过认证的急停，请使用机器人上的物理急停按钮。",
+  known_pose: "已知姿态", mode: "模式", safety: "安全状态", program: "程序", joints: "关节 (rad)", yes: "是", no: "否",
+  trays: "托盘", trays_sub: "推定 · 无托盘传感器", in_zone: "所在区域", on_fork: "叉上",
+  yes_assumed: "是（推定）", none: "无", fault: "故障", tray: "托盘",
+  camera: "检测相机", cam_browser: "本机摄像头", cam_url: "快照 URL", cam_start: "打开摄像头", cam_stop: "关闭摄像头",
+  cam_device: "设备", cam_none: "还没有画面。", cam_age: "最新画面 {age} 秒前", cam_denied: "摄像头被拒绝或不可用",
+  cam_url_hint: "画面来自配置的 URL（CAMERA_URL）。",
+  inspection: "质量检测", rule: "规则", rule_ph: "例如：有划痕或异常的判为不合格",
+  start_inspection: "开始检测", part_ready: "{tray} 托盘已放好零件", analysing: "分析中…",
+  last_inspection: "最近结果", counts: "统计", flow: "{a} 来料 → 相机 → {b} 合格 / {c} 不合格",
+  inspector_mock: "模拟检测（未配置 xAI 密钥）", inspector_grok: "Grok 视觉",
+  no_inspection: "还没有检测。可以说：“开始检测 A 托盘，有划痕的判为不合格”。",
+  status_PASS: "合格", status_FAIL: "不合格", status_UNSURE: "无法判断", status_NO_FRAME: "无画面",
+  sk_vai_a_posa: "移动到姿态", sk_indica: "指向", sk_solleva_vassoio: "抬起托盘", sk_appoggia_vassoio: "放下托盘",
+  sk_spingi: "推动", sk_porta_in_ispezione: "送到相机前", sk_smista: "分拣到托盘",
+};
+
+const DICTS: Record<string, Dict> = { it, en, zh };
+const SPOKEN: Record<string, string> = {
+  it: "italiano", en: "English", zh: "中文", es: "español", fr: "français", de: "Deutsch", ja: "日本語",
+};
+
+export type T = (key: keyof Dict, vars?: Record<string, string | number>) => string;
+
+export function makeT(lang: string): T {
+  const d = DICTS[lang] ?? en;
+  return (key, vars) => {
+    let s: string = d[key] ?? en[key] ?? String(key);
+    for (const [k, v] of Object.entries(vars ?? {})) s = s.replace(`{${k}}`, String(v));
+    return s;
+  };
+}
+
+export const spokenName = (lang: string) => SPOKEN[lang] ?? lang;
+export const LangContext = createContext<{ lang: string; t: T }>({ lang: "it", t: makeT("it") });
+export const useT = () => useContext(LangContext);

@@ -225,7 +225,7 @@ data/
 # VOCE
 logs/
 frontend/node_modules/
-frontend/dist/
+# frontend/dist/ is committed so Windows users can run without Node.js
 *.egg-info/
 
 recordings/
@@ -235,3 +235,4 @@ recordings/
 config/vision/
 uploads/
 *.zip
+!frontend/dist/
