@@ -40,6 +40,7 @@ export const setLanguage = (lang: string) => post("/api/language", { lang });
 export const startInspection = (rule: string) => post("/api/inspection/start", { rule: rule || null });
 export const pointAtCup = (colour: string) => post("/api/vision/point", { colour });
 export const scanCups = async () => (await fetch("/api/vision/cups")).json();
+export const cupsBackground = (clear = false) => post(`/api/vision/cups/background${clear ? "?clear=true" : ""}`);
 export const partReady = () => post("/api/world/part-ready");
 
 export async function pushFrame(jpeg: Blob): Promise<void> {

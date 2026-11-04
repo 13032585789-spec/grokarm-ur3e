@@ -28,7 +28,7 @@ from ..robot.base import COMPLETED, FAILED, NOT_STARTED, STOPPED, UNKNOWN, Execu
 from ..skills.registry import Registry, SkillError, ValidatedAction
 from ..skills.world import WorldModel, joints_close
 from ..vision.inspector import FAIL, PASS, UNSURE, clean_rule
-from ..vision.cups import COLOURS, CupFinder, colour_of
+from ..vision.cups import ALL_COLOURS, CupFinder, colour_of
 from ..vision.texts import t as tr
 from ..vision.texts import word
 from . import phrases
@@ -142,19 +142,45 @@ class Gate:
         self.bus.publish("cups", **res)
         return {"ok": True, **res}
 
-    def point_at_cup(self, colour: Any, *, source: str = "grok") -> dict[str, Any]:
+    def cups_background(self, *, clear: bool = False) -> dict[str, Any]:
+        """Photo of the empty table: enables detection of cups of any colour (white, grey, black)."""
+        if self.camera is None:
+            return _err("telecamera_non_disponibile", "Telecamera non disponibile.")
+        if clear:
+            self.cups.clear_background()
+            return {"ok": True, "detector": self.cups.detector}
+        frame = self.camera.fresh(float((self.s.robot.get("cups") or {}).get("max_frame_age_s", 2.0)))
+        if frame is None:
+            return _err("telecamera_non_disponibile", "Nessuna immagine recente dalla telecamera.")
+        return {**self.cups.capture_background(frame), "detector": self.cups.detector}
+
+    async def point_at_cup(self, colour: Any, *, source: str = "grok") -> dict[str, Any]:
         """Find the cup of that colour in the camera image and propose `indica` on its zone (needs confirmation)."""
         b = self._blocked()
         if b:
             return b
         c = str(colour or "").strip().lower()
-        c = c if c in COLOURS else colour_of(c)
+        c = "grey" if c == "gray" else c
+        c = c if c in ALL_COLOURS else colour_of(c)
         if c is None:
-            return _err("richiesta_ambigua", "Di che colore è il bicchiere?", param="colore", opzioni_valide=list(COLOURS))
+            return _err("richiesta_ambigua", "Di che colore è il bicchiere?", param="colore", opzioni_valide=ALL_COLOURS)
         scan = self.scan_cups()
         if not scan.get("ok"):
             return scan
         seen = scan["cups"]
+        detector = scan.get("detector")
+        if not any(x["colore"] == c for x in seen) and self.s.xai_api_key and \
+                (self.s.robot.get("cups") or {}).get("grok_fallback", True):
+            frame = self.camera.store.latest()
+            try:
+                seen = await self._io(self.cups.grok_lookup, frame, self.s.xai_api_key, self.s.xai_vision_model,
+                                      self.s.xai_base_url, timeout=15)
+                detector = "grok"
+            except Exception as e:
+                log_event(log, "grok cup lookup failed", error=str(e))
+            b = self._blocked()
+            if b:
+                return b
         zones = list(dict.fromkeys(x["zona"] for x in seen if x["colore"] == c))
         if not zones:
             return _err("oggetto_non_trovato", f"Non vedo nessun bicchiere {c}.",
@@ -168,7 +194,7 @@ class Gate:
             self.pending.action.conferma = tr("cup_question", lang, colour=word("colour", c, lang),
                                               zone=word("zone", zones[0], lang))
             res["frase_conferma"] = self.pending.action.conferma
-            res["bicchiere"] = {"colore": c, "zona": zones[0]}
+            res["bicchiere"] = {"colore": c, "zona": zones[0], "rilevatore": detector}
             self.publish_state()
         return res
 

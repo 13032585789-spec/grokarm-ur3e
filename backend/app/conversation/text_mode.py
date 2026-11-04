@@ -75,7 +75,7 @@ class TextConversation:
     async def _cup(self, text: str, intent: Intent) -> dict[str, Any]:
         g = self.gate
         self.context = None
-        res = g.point_at_cup(intent.params["colore"], source="rules")
+        res = await g.point_at_cup(intent.params["colore"], source="rules")
         if res.get("ok"):
             g.mark_question_asked(res["action_id"])
             return self._out(text, intent, res["frase_conferma"], res)

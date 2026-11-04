@@ -199,9 +199,14 @@ def create_app(settings: Settings | None = None, adapter=None, inspector=None) -
 
     @app.post("/api/vision/point")
     async def api_point_cup(body: CupBody) -> JSONResponse:
-        r = gate.point_at_cup(body.colour, source="ui")
+        r = await gate.point_at_cup(body.colour, source="ui")
         if r.get("ok") and r.get("action_id") and not state["voice"] and not state["grok_text"]:
             gate.mark_question_asked(r["action_id"])
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    @app.post("/api/vision/cups/background")
+    async def api_cups_background(clear: bool = False) -> JSONResponse:
+        r = gate.cups_background(clear=clear)
         return JSONResponse(r, status_code=200 if r.get("ok") else 409)
 
     @app.get("/api/vision/cups.jpg")

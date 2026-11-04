@@ -16,7 +16,8 @@ ZONES = ["sinistra", "centro", "destra"]
 def table(*cups: tuple[str, int]) -> np.ndarray:
     """cups: (colour, x centre) on a grey table, 960x540."""
     img = np.full((540, 960, 3), (95, 100, 105), np.uint8)
-    bgr = {"red": (30, 30, 210), "blue": (200, 90, 20), "green": (50, 170, 40), "yellow": (30, 210, 230)}
+    bgr = {"red": (30, 30, 210), "blue": (200, 90, 20), "green": (50, 170, 40), "yellow": (30, 210, 230),
+           "white": (245, 245, 245), "black": (25, 25, 25)}
     for colour, x in cups:
         cv2.ellipse(img, (x, 300), (45, 30), 0, 0, 360, bgr[colour], -1)
         cv2.rectangle(img, (x - 40, 300), (x + 40, 380), bgr[colour], -1)
@@ -47,6 +48,7 @@ def test_colour_words():
 
 
 async def _gate_with(gate, img):
+    gate.s.robot.setdefault("cups", {})["grok_fallback"] = False
     cam = CameraHub(gate.s)
     gate.attach_vision(cam, MockInspector())
     cam.push(jpeg(img))
@@ -56,7 +58,7 @@ async def _gate_with(gate, img):
 async def test_point_at_cup_proposes_indica_and_needs_yes(gate):
     await _gate_with(gate, table(("red", 150), ("blue", 480)))
     gate.s.lang = "zh"
-    r = gate.point_at_cup("blue")
+    r = await gate.point_at_cup("blue")
     assert r["ok"] and r["skill"] == "indica" and r["parametri"] == {"posizione": "centro"}
     assert r["frase_conferma"].startswith("我看到蓝色的纸杯在中间区域")
     assert gate.state == GateState.PENDING_CONFIRMATION
@@ -67,14 +69,14 @@ async def test_point_at_cup_proposes_indica_and_needs_yes(gate):
 
 
 async def test_point_at_cup_missing_ambiguous_no_camera(gate):
-    r = gate.point_at_cup("red")
+    r = await gate.point_at_cup("red")
     assert r["esito"] == "telecamera_non_disponibile"
     await _gate_with(gate, table(("green", 150), ("green", 800), ("red", 480)))
-    r = gate.point_at_cup("blue")
+    r = await gate.point_at_cup("blue")
     assert r["esito"] == "oggetto_non_trovato" and "red (centro)" in r["visti"]
-    r = gate.point_at_cup("green")
+    r = await gate.point_at_cup("green")
     assert r["esito"] == "richiesta_ambigua" and r["opzioni_valide"] == ["sinistra", "destra"]
-    assert gate.point_at_cup("pink")["esito"] == "richiesta_ambigua"
+    assert (await gate.point_at_cup("gold"))["esito"] == "richiesta_ambigua"
     assert gate.pending is None
 
 
@@ -83,3 +85,33 @@ async def test_text_mode_cup(gate):
     await _gate_with(gate, table(("yellow", 800)))
     out = await TextConversation(gate).handle("point at the yellow cup")
     assert out["result"]["parametri"] == {"posizione": "destra"} and gate.pending.question_asked_at is not None
+
+
+async def test_background_mode_finds_white_and_black(gate):
+    cam = await _gate_with(gate, table())
+    assert gate.cups_background()["detector"] == "background"
+    cam.push(jpeg(table(("white", 150), ("black", 800))))
+    seen = gate.scan_cups()["cups"]
+    assert [(c["colore"], c["zona"]) for c in seen] == [("white", "sinistra"), ("black", "destra")]
+    r = await gate.point_at_cup("白色")
+    assert r["ok"] and r["parametri"] == {"posizione": "sinistra"} and r["bicchiere"]["rilevatore"] == "background"
+    gate.cancel()
+    assert gate.cups_background(clear=True)["detector"] == "colour"
+    assert gate.scan_cups()["cups"] == []          # colour mode ignores white/black
+
+
+def test_grok_cup_lookup_validates_reply():
+    import json
+
+    import httpx
+
+    from app.vision.cups import grok_find_cups
+    reply = {"cups": [{"colour": "white", "zone": "centro"}, {"colour": "gray", "zone": "destra"},
+                      {"colour": "white", "zone": "x=0.3"}, {"colour": "gold", "zone": "centro"}]}
+
+    def handler(req):
+        body = json.loads(req.content)
+        assert "sinistra, centro, destra" in body["messages"][0]["content"][1]["text"]
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(reply)}}]})
+    out = grok_find_cups(table(), ZONES, "k", "m", "https://x", transport=httpx.MockTransport(handler))
+    assert out == [{"colore": "white", "zona": "centro"}, {"colore": "grey", "zona": "destra"}]

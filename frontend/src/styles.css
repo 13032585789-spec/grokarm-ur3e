@@ -177,3 +177,6 @@ button.primary:hover:not(:disabled) { filter: brightness(1.1); }
 .cup-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
 .c-red { background: #e5322d; } .c-orange { background: #ff8c1a; } .c-yellow { background: #f2d43d; }
 .c-green { background: #3ccf8e; } .c-blue { background: #3f7bff; } .c-purple { background: #b35cff; }
+.cup-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.cup-tools .sub { margin: 0 auto 0 0; }
+.c-pink { background: #ff6fb5; } .c-white { background: #f4f4f4; } .c-grey { background: #9a9a9a; } .c-black { background: #111; border: 1px solid #555; }

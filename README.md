@@ -86,7 +86,14 @@ the existing `indica(zone)` with the taught poses. The operator confirms as usua
 * Set-up: mount the phone/webcam looking down at the table and adjust `zone_cuts` so the lines in the overlay match
   the tray zones. If the camera faces the robot, reverse `image_zone_order`. Use `roi` to crop out the arm.
 * Rehearsal: `python scripts/fake_camera.py --cups`.
-* Limits: white, grey and black cups are not detected (no colour), and touching cups of one colour merge into one.
+* White, grey and black cups: remove all cups and press **Photo of empty table**. Detection then uses the
+  difference to that photo (any colour, including white, grey, black and pink). Take the photo again if the light or
+  the camera moves. If the named colour is still not found and `XAI_API_KEY` is set, Grok Vision is asked once with the
+  zone lines drawn on the image (`cups.grok_fallback`), and the reply is validated against the known colours and zones.
+  Rehearsal: `fake_camera.py --cups --empty`, take the photo, then `--cups --mono`.
+* Open-source options not wired in: YOLO11 / YOLO-World (Ultralytics, AGPL-3.0, has a COCO "cup" class) and
+  OWLv2 / Grounding DINO (Apache-2.0, text prompt "white paper cup", heavy on CPU).
+* Limits: touching cups merge into one.
   Precision is one zone. Pointing at an arbitrary XY above a cup needs the calibrated `grokarm_vision` service plus
   a new bounded Cartesian skill, which is not done yet.
 

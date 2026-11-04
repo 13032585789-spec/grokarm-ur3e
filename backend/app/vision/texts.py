@@ -75,6 +75,10 @@ T["colour"] = {
     "green": {"it": "verde", "en": "green", "zh": "绿色", "es": "verde", "fr": "vert", "de": "grüne", "ja": "緑の"},
     "blue": {"it": "blu", "en": "blue", "zh": "蓝色", "es": "azul", "fr": "bleu", "de": "blaue", "ja": "青い"},
     "purple": {"it": "viola", "en": "purple", "zh": "紫色", "es": "morado", "fr": "violet", "de": "lila", "ja": "紫の"},
+    "pink": {"it": "rosa", "en": "pink", "zh": "粉色", "es": "rosa", "fr": "rose", "de": "rosa", "ja": "ピンクの"},
+    "white": {"it": "bianco", "en": "white", "zh": "白色", "es": "blanco", "fr": "blanc", "de": "weiße", "ja": "白い"},
+    "grey": {"it": "grigio", "en": "grey", "zh": "灰色", "es": "gris", "fr": "gris", "de": "graue", "ja": "灰色の"},
+    "black": {"it": "nero", "en": "black", "zh": "黑色", "es": "negro", "fr": "noir", "de": "schwarze", "ja": "黒い"},
 }
 T["cup_question"] = {
     "it": "Vedo il bicchiere {colour} nella zona {zone}. Lo indico con la punta. Confermi?",

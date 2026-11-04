@@ -53,7 +53,8 @@ def tool_schemas(s: Settings, poses: list[str], *, stretch: bool = True) -> list
          "description": "Indica con la punta il bicchiere di carta del colore detto dall'operatore. Il sistema lo cerca "
                         "nell'immagine della telecamera, trova la zona e crea un'azione indica in attesa di conferma.",
          "parameters": {"type": "object", "properties": {"colore": {
-             "type": "string", "enum": ["red", "orange", "yellow", "green", "blue", "purple"]}}, "required": ["colore"]}},
+             "type": "string", "enum": ["red", "orange", "yellow", "green", "blue", "purple", "pink", "white", "grey",
+                                        "black"]}}, "required": ["colore"]}},
         {"type": "function", "name": "look_cups",
          "description": "Elenca i bicchieri colorati che la telecamera vede adesso e in quale zona. Non muove il robot.",
          "parameters": {"type": "object", "properties": {}}},
@@ -118,7 +119,7 @@ async def dispatch(gate: Gate, name: str, args: dict[str, Any], *, source: str =
                      if isinstance(p, dict)]
             return gate.propose_sequence(steps, source=source)
         if name == "point_at_cup":
-            return gate.point_at_cup(args.get("colore") or args.get("colour"), source=source)
+            return await gate.point_at_cup(args.get("colore") or args.get("colour"), source=source)
         if name == "look_cups":
             r = gate.scan_cups()
             return {k: v for k, v in r.items() if k != "frame_id"}

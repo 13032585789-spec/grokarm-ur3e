@@ -72,6 +72,8 @@ cups:
   min_area_frac: 0.002
   max_area_frac: 0.25
   max_frame_age_s: 2.0
+  diff_threshold: 30             # background mode (after 'empty table' photo): any colour incl. white/black
+  grok_fallback: true            # ask Grok Vision when the named colour is not found locally (needs XAI_API_KEY)
 
 safety:
   confirmation_ttl_s: 20

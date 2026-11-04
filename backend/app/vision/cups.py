@@ -1,6 +1,10 @@
-"""Coloured paper cups seen by the camera -> which workspace zone each one is in.
+"""Paper cups seen by the camera -> which workspace zone each one is in.
 
-Pure colour segmentation (HSV), no background photo needed. The image is split
+Two detectors:
+  colour      HSV segmentation of saturated colours; no background photo needed.
+  background  difference against a photo of the empty table; finds cups of ANY colour
+              (white, grey, black too). Used automatically once a background is captured.
+Optional Grok Vision fallback when the named colour is not found locally. The image is split
 into the configured zones by vertical lines, so the arm can point at a cup with
 the existing taught `indica` poses: no new motion, no coordinates from the model.
 Read-only: never moves the robot.
@@ -8,13 +12,18 @@ Read-only: never moves the robot.
 
 from __future__ import annotations
 
+import base64
+import json
 import time
 import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
 import cv2
+import httpx
 import numpy as np
+
+from grokarm_vision.detect import find_candidates
 
 # OpenCV hue is 0..179
 COLOURS: dict[str, list[tuple[int, int]]] = {
@@ -25,8 +34,10 @@ COLOURS: dict[str, list[tuple[int, int]]] = {
     "blue": [(90, 128)],
     "purple": [(129, 169)],
 }
+ALL_COLOURS = list(COLOURS) + ["pink", "white", "grey", "black"]
 BGR = {"red": (40, 40, 230), "orange": (0, 140, 255), "yellow": (0, 220, 240), "green": (60, 200, 60),
-       "blue": (230, 120, 30), "purple": (200, 60, 170)}
+       "blue": (230, 120, 30), "purple": (200, 60, 170), "pink": (180, 105, 255), "white": (250, 250, 250),
+       "grey": (160, 160, 160), "black": (20, 20, 20)}
 
 COLOUR_WORDS: dict[str, list[str]] = {
     "red": ["red", "rosso", "rossa", "rossi", "rojo", "roja", "rouge", "rot", "rote", "roten", "红", "紅", "赤"],
@@ -35,6 +46,11 @@ COLOUR_WORDS: dict[str, list[str]] = {
     "green": ["green", "verde", "vert", "verte", "grun", "grune", "grunen", "绿", "綠", "緑"],
     "blue": ["blue", "blu", "azzurro", "azzurra", "azul", "bleu", "bleue", "blau", "blaue", "blauen", "蓝", "藍", "青"],
     "purple": ["purple", "viola", "morado", "morada", "violet", "violette", "lila", "紫"],
+    "pink": ["pink", "rosa", "rose", "粉", "ピンク"],
+    "white": ["white", "bianco", "bianca", "blanco", "blanca", "blanc", "blanche", "weiss", "weisse", "weissen", "白"],
+    "grey": ["grey", "gray", "grigio", "grigia", "gris", "grise", "grau", "graue", "grauen", "灰", "グレー"],
+    "black": ["black", "nero", "nera", "negro", "negra", "noir", "noire", "schwarz", "schwarze", "schwarzen", "黑",
+              "黒"],
 }
 _CJK = "\u3040-\u30ff\u3400-\u9fff"
 
@@ -133,18 +149,90 @@ def annotate(image: np.ndarray, cups: list[Cup], zones: list[str], cfg: dict[str
     return out
 
 
+def _zone_of(fx: float, bounds: list[tuple[str, float, float]]) -> str:
+    return next((z for z, a, b in bounds if a <= fx < b), bounds[-1][0])
+
+
+def find_cups_background(image: np.ndarray, background: np.ndarray, zones: list[str], cfg: dict[str, Any]) -> list[Cup]:
+    h, w = image.shape[:2]
+    x0, y0, x1, y1 = cfg.get("roi") or [0.0, 0.0, 1.0, 1.0]
+    bounds = zone_bounds(zones, cfg)
+    cands = find_candidates(image, background, diff_threshold=int(cfg.get("diff_threshold", 30)),
+                            min_area_frac=float(cfg.get("min_area_frac", 0.002)),
+                            max_area_frac=float(cfg.get("max_area_frac", 0.25)))
+    cups = []
+    for c in cands:
+        fx, fy = c.px[0] / w, c.px[1] / h
+        if not (x0 <= fx <= x1 and y0 <= fy <= y1):
+            continue
+        cups.append(Cup(c.colour, c.px, c.bbox, c.area_px / (w * h), _zone_of(fx, bounds)))
+    return cups
+
+
+GROK_PROMPT = """You see a table split into vertical zones by thin grey lines, labelled at the bottom: {zones}.
+List every paper cup (or cup-like container) standing on the table. For each give its main colour, one of
+{colours}, and the zone label it stands in. Ignore the robot arm, cables and anything that is not a cup.
+Return EXACTLY this JSON and nothing else: {{"cups": [{{"colour": "...", "zone": "..."}}]}}"""
+
+
+def grok_find_cups(annotated: np.ndarray, zones: list[str], key: str, model: str, base_url: str,
+                   transport: httpx.BaseTransport | None = None, timeout_s: float = 12.0) -> list[dict[str, str]]:
+    """Grok Vision fallback. Returns [{'colore', 'zona'}] with zones and colours validated against the lists."""
+    ok, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    body = {"model": model, "temperature": 0, "messages": [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode(),
+                                            "detail": "high"}},
+        {"type": "text", "text": GROK_PROMPT.format(zones=", ".join(zones), colours=", ".join(ALL_COLOURS))}]}]}
+    with httpx.Client(timeout=timeout_s, transport=transport) as client:
+        r = client.post(f"{base_url}/chat/completions", headers={"Authorization": f"Bearer {key}"}, json=body)
+        r.raise_for_status()
+    text = r.json()["choices"][0]["message"]["content"]
+    if isinstance(text, list):
+        text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
+    text = str(text)
+    data = json.loads(text[text.find("{"): text.rfind("}") + 1])
+    out = []
+    for c in data.get("cups") or []:
+        colour, zone = str(c.get("colour", "")).lower().strip(), str(c.get("zone", "")).lower().strip()
+        colour = "grey" if colour == "gray" else colour
+        if colour in ALL_COLOURS and zone in zones:
+            out.append({"colore": colour, "zona": zone})
+    return out
+
+
 class CupFinder:
     def __init__(self, zones: list[str], cfg: dict[str, Any], labels: dict[str, str] | None = None) -> None:
         self.zones, self.cfg, self.labels = zones, cfg, labels or {}
         self.last: dict[str, Any] | None = None
         self.last_jpeg: bytes | None = None
+        self.background: np.ndarray | None = None
+
+    def capture_background(self, frame: Any) -> dict[str, Any]:
+        self.background = frame.image.copy()
+        return {"ok": True, "size": list(frame.size)}
+
+    def clear_background(self) -> None:
+        self.background = None
+
+    @property
+    def detector(self) -> str:
+        return "background" if self.background is not None else "colour"
+
+    def grok_lookup(self, frame: Any, key: str, model: str, base_url: str) -> list[dict[str, str]]:
+        """Zones are drawn on the image with the internal zone ids as labels, so Grok answers in those ids."""
+        annotated = annotate(frame.image, [], self.zones, self.cfg, {z: z for z in self.zones})
+        return grok_find_cups(annotated, self.zones, key, model, base_url)
 
     def scan(self, frame: Any) -> dict[str, Any]:
         t0 = time.perf_counter()
-        cups = find_cups(frame.image, self.zones, self.cfg)
+        bg = self.background
+        if bg is not None and bg.shape == frame.image.shape:
+            cups = find_cups_background(frame.image, bg, self.zones, self.cfg)
+        else:
+            cups = find_cups(frame.image, self.zones, self.cfg)
         ok, buf = cv2.imencode(".jpg", annotate(frame.image, cups, self.zones, self.cfg, self.labels),
                                [cv2.IMWRITE_JPEG_QUALITY, 80])
         self.last_jpeg = buf.tobytes() if ok else None
         self.last = {"cups": [c.public() for c in cups], "frame_id": frame.frame_id, "at": time.time(),
-                     "ms": round((time.perf_counter() - t0) * 1000, 1)}
+                     "ms": round((time.perf_counter() - t0) * 1000, 1), "detector": self.detector}
         return self.last

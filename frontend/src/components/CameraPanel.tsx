@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../i18n";
-import { pointAtCup, pushFrame, scanCups } from "../services/api";
+import { cupsBackground, pointAtCup, pushFrame, scanCups } from "../services/api";
 import type { CameraStatus } from "../services/types";
 
 const PUSH_MS = 400;
@@ -14,6 +14,7 @@ export function CameraPanel({ camera, source, zoneLabels, canPoint }: { camera: 
   const [cupsOn, setCupsOn] = useState(false);
   const [cups, setCups] = useState<SeenCup[] | null>(null);
   const [scanId, setScanId] = useState(0);
+  const [detector, setDetector] = useState<string>("colour");
   useEffect(() => {
     if (!cupsOn) return;
     let alive = true;
@@ -21,7 +22,7 @@ export function CameraPanel({ camera, source, zoneLabels, canPoint }: { camera: 
       try {
         const r = await scanCups();
         if (!alive) return;
-        if (r.ok) { setCups(r.cups); setScanId(r.frame_id); setErr(""); } else { setCups(null); setErr(r.messaggio ?? ""); }
+        if (r.ok) { setCups(r.cups); setScanId(r.frame_id); setDetector(r.detector ?? "colour"); setErr(""); } else { setCups(null); setErr(r.messaggio ?? ""); }
       } catch { /* next tick */ }
     };
     run();
@@ -130,6 +131,16 @@ export function CameraPanel({ camera, source, zoneLabels, canPoint }: { camera: 
         <input type="checkbox" checked={cupsOn} onChange={(e) => { setCupsOn(e.target.checked); if (!e.target.checked) setCups(null); }} />
         <span>{t("cups")}</span>
       </label>
+      {cupsOn && (
+        <div className="cup-tools">
+          <span className="sub">{detector === "background" ? t("det_background") : t("det_colour")}</span>
+          <button onClick={async () => { const r = await cupsBackground(); if (!r.ok) setErr(r.messaggio ?? ""); else setDetector(r.detector); }}>
+            {t("cups_bg")}</button>
+          {detector === "background" && <button onClick={async () => { const r = await cupsBackground(true); setDetector(r.detector ?? "colour"); }}>
+            {t("cups_bg_clear")}</button>}
+        </div>
+      )}
+      {cupsOn && detector !== "background" && <div className="hint">{t("cups_bg_hint")}</div>}
       {cupsOn && cups && (cups.length === 0 ? <div className="empty">{t("cups_none")}</div> : (
         <ul className="cup-list">
           {cups.map((c, i) => (
