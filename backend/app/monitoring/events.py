@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import statistics
 import time
@@ -22,7 +23,9 @@ class _JsonFormatter(logging.Formatter):
         d = {"ts": round(r.created, 3), "level": r.levelname, "logger": r.name, "msg": r.getMessage()}
         if hasattr(r, "data"):
             d["data"] = r.data
-        return _SECRET_RE.sub("xai-***", json.dumps(d, ensure_ascii=False, default=str))
+        text = _SECRET_RE.sub("xai-***", json.dumps(d, ensure_ascii=False, default=str))
+        key = os.getenv("XAI_API_KEY") or ""
+        return text.replace(key, "***") if len(key) >= 8 else text
 
 
 def setup_logging(log_dir: Path = LOG_DIR, level: int = logging.INFO) -> None:
