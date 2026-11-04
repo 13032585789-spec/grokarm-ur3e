@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrokArm</title>
+<style>
+  :root {
+    --bg: #101214; --panel: #191c1f; --line: #2c3136; --text: #eceef0; --muted: #98a1a9;
+    --go: #3ddc97; --ask: #ffc53d; --run: #4aa8ff; --stop: #e5252a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) 340px; }
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 20px; margin: 0 auto 0 0; letter-spacing: .02em; }
+  .tag { font: 12px/1 ui-monospace, Consolas, monospace; color: var(--muted); border: 1px solid var(--line); padding: 6px 8px; border-radius: 4px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-width: 0; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; }
+  #state { font: 700 40px/1.1 system-ui, "Segoe UI", sans-serif; letter-spacing: .01em; }
+  #state[data-s="PROPOSED"] { color: var(--ask); }
+  #state[data-s="EXECUTING"] { color: var(--run); }
+  #state[data-s="STOPPING"] { color: var(--stop); }
+  #state[data-s="IDLE"] { color: var(--go); }
+  #skill { color: var(--muted); min-height: 24px; }
+  #stop {
+    width: 100%; min-height: 150px; border: 0; border-radius: 8px; cursor: pointer;
+    background: var(--stop); color: #fff; font: 800 48px/1 system-ui, "Segoe UI", sans-serif; letter-spacing: .04em;
+  }
+  #stop small { display: block; font: 500 13px/1.4 system-ui, sans-serif; letter-spacing: 0; margin-top: 6px; opacity: .9; }
+  #stop:active { filter: brightness(.8); }
+  #stop:focus-visible, button:focus-visible, input:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+  #log { height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 85%; padding: 8px 10px; border-radius: 8px; background: #23272b; align-self: flex-start; overflow-wrap: anywhere; }
+  .msg.user { align-self: flex-end; background: #1f3a55; }
+  .msg.sys { align-self: center; background: none; color: var(--muted); font-size: 13px; padding: 0; }
+  .msg.err { align-self: stretch; max-width: none; background: #4a1a1c; }
+  form { display: flex; gap: 8px; margin-top: 12px; }
+  input { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 10px; font: inherit; }
+  button.plain { background: #2b3036; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; font: inherit; cursor: pointer; }
+  #mic[aria-pressed="true"] { background: var(--go); color: #06281a; border-color: var(--go); }
+  dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; }
+  dt { color: var(--muted); } dd { margin: 0; font-family: ui-monospace, Consolas, monospace; text-align: right; }
+  .side { display: grid; gap: 16px; align-content: start; min-width: 0; }
+  #events { max-height: 220px; overflow-y: auto; font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--muted); overflow-wrap: anywhere; }
+  @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } header { order: -2; } .side { order: -1; } #stop { min-height: 110px; font-size: 36px; } #state { font-size: 32px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>GrokArm</h1>
+    <span class="tag" id="link">disconnesso</span>
+    <span class="tag" id="mode">-</span>
+    <button class="plain" id="mic" aria-pressed="false">Microfono</button>
+  </header>
+  <div>
+    <section>
+      <h2>Stato</h2>
+      <div id="state" data-s="IDLE" role="status" aria-live="polite">IDLE</div>
+      <div id="skill"></div>
+    </section>
+    <section style="margin-top:16px">
+      <h2>Conversazione</h2>
+      <div id="log" aria-live="polite"></div>
+      <form id="form">
+        <input id="text" autocomplete="off" aria-label="Comando scritto" placeholder="Scrivi un comando, per provare senza microfono">
+        <button class="plain">Invia</button>
+      </form>
+    </section>
+  </div>
+  <div class="side">
+    <button id="stop">STOP<small>Barra spaziatrice. Software, non è un arresto di emergenza.</small></button>
+    <section>
+      <h2>Robot</h2>
+      <dl>
+        <dt>Connesso</dt><dd id="r-conn">-</dd>
+        <dt>Pronto</dt><dd id="r-ready">-</dd>
+        <dt>In movimento</dt><dd id="r-move">-</dd>
+        <dt>Arresto protettivo</dt><dd id="r-prot">-</dd>
+        <dt>Fine frase → movimento</dt><dd id="m-go">-</dd>
+        <dt>Stop → fermo</dt><dd id="m-stop">-</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Eventi</h2>
+      <div id="events"></div>
+    </section>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let ws, audioCtx, micNode, micStream, playHead = 0, liveUser = null, liveBot = null;
+const playing = new Set();
+
+function add(cls, text) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + cls;
+  el.textContent = text;
+  $('log').append(el);
+  $('log').scrollTop = $('log').scrollHeight;
+  return el;
+}
+
+function connect() {
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => $('link').textContent = 'connesso';
+  ws.onclose = () => { $('link').textContent = 'disconnesso'; setTimeout(connect, 1500); };
+  ws.onmessage = e => handle(JSON.parse(e.data));
+}
+
+function handle(m) {
+  if (m.type === 'hello') $('mode').textContent = 'voce: ' + m.voice;
+  if (m.type === 'state') showState(m);
+  if (m.type === 'audio') playChunk(m.delta);
+  if (m.type === 'audio_clear') clearAudio();
+  if (m.type === 'error') add('err', m.message);
+  if (m.type === 'event') {
+    const row = document.createElement('div');
+    row.textContent = new Date(m.ts * 1000).toLocaleTimeString() + ' ' + m.event;
+    $('events').prepend(row);
+  }
+  if (m.type === 'assistant_done') liveBot = null;
+  if (m.type === 'transcript') {
+    if (m.role === 'user') {
+      liveUser = liveUser || add('user', '');
+      liveUser.textContent = m.text;
+      if (m.final) liveUser = null;
+    } else if (m.final) {
+      add('bot', m.text); liveBot = null;
+    } else {
+      liveBot = liveBot || add('bot', '');
+      liveBot.textContent += m.text;
+    }
+  }
+}
+
+function showState(m) {
+  $('state').textContent = m.state;
+  $('state').dataset.s = m.state;
+  $('skill').textContent = m.skill || '';
+  const yn = v => v ? 'sì' : 'no';
+  $('r-conn').textContent = yn(m.robot.connected);
+  $('r-ready').textContent = yn(m.robot.ready);
+  $('r-move').textContent = yn(m.robot.moving);
+  $('r-prot').textContent = yn(m.robot.protective_stop);
+  const ms = v => v === undefined ? '-' : v + ' ms';
+  $('m-go').textContent = ms(m.metrics.last_speech_to_motion_ms);
+  $('m-stop').textContent = ms(m.metrics.last_stop_to_still_ms);
+}
+
+function stop() {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({type: 'stop'}));
+  fetch('/api/stop', {method: 'POST', keepalive: true}).catch(() => {});  // a second, separate path
+}
+$('stop').onclick = stop;
+addEventListener('keydown', e => {
+  if (e.code === 'Space' && e.target.tagName !== 'INPUT' && !e.repeat) { e.preventDefault(); stop(); }
+});
+
+$('form').onsubmit = e => {
+  e.preventDefault();
+  const text = $('text').value.trim();
+  if (text && ws.readyState === 1) ws.send(JSON.stringify({type: 'text', text}));
+  $('text').value = '';
+};
+
+const WORKLET = `class Mic extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Int16Array(2400); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0][0];
+    if (ch) for (let i = 0; i < ch.length; i++) {
+      this.buf[this.n++] = Math.max(-1, Math.min(1, ch[i])) * 32767;
+      if (this.n === this.buf.length) { this.port.postMessage(this.buf.slice().buffer); this.n = 0; }
+    }
+    return true;
+  }
+}
+registerProcessor('mic', Mic);`;
+
+async function ensureAudio() {
+  audioCtx = audioCtx || new AudioContext({sampleRate: 24000});
+  await audioCtx.resume();
+}
+
+async function toggleMic() {
+  if (micStream) {
+    micStream.getTracks().forEach(t => t.stop());
+    micNode.disconnect();
+    micStream = null;
+    $('mic').setAttribute('aria-pressed', 'false');
+    return;
+  }
+  try {
+    await ensureAudio();
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1},
+    });
+    const url = URL.createObjectURL(new Blob([WORKLET], {type: 'text/javascript'}));
+    await audioCtx.audioWorklet.addModule(url);
+    micNode = new AudioWorkletNode(audioCtx, 'mic');
+    micNode.port.onmessage = e => { if (ws.readyState === 1) ws.send(e.data); };
+    audioCtx.createMediaStreamSource(micStream).connect(micNode);
+    $('mic').setAttribute('aria-pressed', 'true');
+  } catch (err) {
+    micStream = null;
+    add('err', 'Microfono non disponibile: ' + err.message);
+  }
+}
+$('mic').onclick = toggleMic;
+
+function playChunk(b64) {
+  if (!audioCtx) return;
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const pcm = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+  const buf = audioCtx.createBuffer(1, pcm.length, 24000);
+  const out = buf.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) out[i] = pcm[i] / 32768;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioCtx.destination);
+  playHead = Math.max(playHead, audioCtx.currentTime + 0.02);
+  src.start(playHead);
+  playHead += buf.duration;
+  playing.add(src);
+  src.onended = () => playing.delete(src);
+}
+
+function clearAudio() {
+  playing.forEach(s => { try { s.stop(); } catch {} });
+  playing.clear();
+  playHead = 0;
+}
+
+fetch('/api/status').then(r => r.json()).then(s => {
+  add('sys', 'Robot: ' + s.robot_mode + '. Competenze: ' + s.skills.map(k => k.id).join(', '));
+});
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# SIMULATOR ONLY. The real adapter refuses this file because target is "ursim".
+# These values were never checked on hardware. Do not copy them to the arm.
+
+target: ursim
+approved_by: simulator
+approved_at: ""
+
+known_poses:
+  safe: [0.0, -1.57, 1.57, -1.57, -1.57, 0.0]
+  left: [0.5, -1.57, 1.57, -1.57, -1.57, 0.0]
+  right: [-0.5, -1.57, 1.57, -1.57, -1.57, 0.0]
+
+skills:
+  go_to_safe_pose:
+    waypoints:
+      - [0.0, -1.57, 1.57, -1.57, -1.57, 0.0]
+  point_left:
+    waypoints:
+      - [0.5, -1.57, 1.57, -1.57, -1.57, 0.0]
+  point_right:
+    waypoints:
+      - [-0.5, -1.57, 1.57, -1.57, -1.57, 0.0]

@@ -1,0 +1,49 @@
+# Skills Grok may choose from. This file holds NO coordinates.
+# Poses live in a separate file (see poses.example.yaml).
+# Keep lift_tray / put_down_tray / push disabled until they pass a staffed slot.
+
+limits:
+  speed_rad_s: 0.25      # conservative default; staff decide the real value
+  accel_rad_s2: 0.5
+  stop_decel_rad_s2: 2.0
+  skill_timeout_s: 20
+  joint_tolerance_rad: 0.02
+  start_pose_tolerance_rad: 0.05
+
+skills:
+  go_to_safe_pose:
+    enabled: true
+    label_it: tornare alla posizione sicura
+    done_it: sono tornato alla posizione sicura
+    description: Move to the staff-defined safe pose. Use for home, rest, park, go back, posizione sicura.
+    mock_duration_s: 3.0
+  point_left:
+    enabled: true
+    label_it: indicare a sinistra
+    done_it: ho indicato a sinistra
+    description: Point the tool tip at the taught LEFT position.
+    mock_duration_s: 3.0
+  point_right:
+    enabled: true
+    label_it: indicare a destra
+    done_it: ho indicato a destra
+    description: Point the tool tip at the taught RIGHT position.
+    mock_duration_s: 3.0
+  lift_tray:
+    enabled: false
+    label_it: sollevare il vassoio
+    done_it: ho sollevato il vassoio
+    description: Lift the slotted tray with the fork from its approved position.
+    mock_duration_s: 5.0
+  put_down_tray:
+    enabled: false
+    label_it: posare il vassoio
+    done_it: ho posato il vassoio
+    description: Put the slotted tray down at its approved position.
+    mock_duration_s: 5.0
+  push:
+    enabled: false
+    label_it: spingere l'oggetto
+    done_it: ho spinto l'oggetto
+    description: Push the object at the approved position with the pusher.
+    mock_duration_s: 4.0

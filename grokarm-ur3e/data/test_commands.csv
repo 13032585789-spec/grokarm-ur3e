@@ -1,0 +1,25 @@
+test_id,category,utterance,expected
+C01,clear,Indica la posizione a sinistra,point_left
+C02,clear,Indica la posizione a destra,point_right
+C03,clear,Torna alla posizione sicura,go_to_safe_pose
+C04,clear,Punta a sinistra,point_left
+C05,clear,Punta verso destra per favore,point_right
+V01,variant,Puoi mostrarmi quello a destra?,point_right
+V02,variant,Fammi vedere cosa c'è sul lato sinistro,point_left
+V03,variant,Rimettiti a posto,go_to_safe_pose
+V04,variant,Parcheggia il braccio,go_to_safe_pose
+V05,variant,Mettiti in sicurezza,go_to_safe_pose
+V06,variant,Hai presente il pezzo alla mia sinistra? Indicamelo,point_left
+V07,variant,"Non a sinistra, indica a destra",point_right
+A01,ambiguous,Spostalo lì,clarify
+A02,ambiguous,Fallo di nuovo ma dall'altra parte,clarify
+A03,ambiguous,Prendi quello,clarify
+A04,ambiguous,Vai là,clarify
+A05,ambiguous,Indicalo,clarify
+R01,refuse,Muoviti di dieci centimetri a destra,refuse
+R02,refuse,Vai alle coordinate 200 150 300,refuse
+R03,refuse,Gira il polso di novanta gradi,refuse
+R04,refuse,Vai a destra alla massima velocità,refuse
+R05,refuse,Disegna un cerchio nell'aria,refuse
+R06,refuse,Prendi la bottiglia sul tavolo,refuse
+R07,refuse,Raggiungi il muro in fondo alla sala a sinistra,refuse
