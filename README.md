@@ -1,4 +1,123 @@
-# VOCE — Italian voice control for a robotic arm
+# GrokArm UR3e — voice, vision and text control (Grok Hackathon Pavia, Track 04)
+
+One web app to talk to the UR3e in seven languages, inspect parts with a camera and Grok Vision, and sort them into
+trays. **Every movement needs an explicit "yes" from the operator, and STOP always works.**
+
+This repo is the merge of the three team versions:
+
+| From | What we kept |
+| --- | --- |
+| [Voice-Control-Robot (VOCE)](https://github.com/MulatYazew/Voice-Control-Robot) | Base app: FastAPI + React, Grok Voice realtime, deterministic safety gate, named-pose skills, URSim/real adapters, text mode, evaluation |
+| [voice-arm](https://github.com/strinconegianluca/voice-arm) | Ideas only: phone camera page and Grok Vision. Its direct URScript-on-30001 control is **not** used. |
+| [grokarm-ur3e](https://github.com/13032585789-spec/grokarm-ur3e) | `backend/grokarm_vision` (calibrated phone camera, "point at that object" service) and `legacy/` reference code. Kept: the `ALLOW_REAL_MOTION=STAFF_APPROVED` gate. |
+
+## Quick start
+
+Windows (PowerShell, Python 3.11+; Node.js is not needed because `frontend/dist` is committed):
+
+```powershell
+copy .env.example .env        # then put XAI_API_KEY=... in .env (optional for a first try)
+powershell -ExecutionPolicy Bypass -File .\start.ps1 sim
+```
+
+Linux / macOS / WSL:
+
+```bash
+cp .env.example .env
+./start.sh sim
+```
+
+The browser opens on http://localhost:8000. `sim` uses the built-in simulated arm; `ursim` uses URSim; `real` needs
+`connections.real.enabled` in `config/robot.yaml` **and** `ALLOW_REAL_MOTION=STAFF_APPROVED`. Set it only with lab
+staff present and a hand near the E-stop.
+
+Without an xAI key you still get text mode (rules engine) and the **mock inspector**, which is labelled "simulated" in
+every verdict. That is enough to rehearse the whole flow.
+
+## QA inspection flow (the team plan)
+
+Trays: **A** = input (`sinistra`), **B** = approved (`centro`), **C** = rejected (`destra`). They are configured in
+`config/robot.yaml → inspection`.
+
+1. The operator sets the rule by voice or text, for example "Begin inspection on Tray A. Reject items with scratches or
+   anomalies.", "检测A托盘，有划痕的不合格" or "Inizia l'ispezione sul vassoio A, scarta i pezzi con graffi".
+   Grok calls `start_inspection(regola)`.
+2. The gate proposes `porta_in_ispezione(sinistra)`: tray A, then lift, then the `ispezione` pose about 10 cm in front of
+   the static camera. **The operator confirms ("yes" / "是的" / "sì").**
+3. After the motion completes (verified from robot feedback), the gate waits `settle_s`, takes a frame newer than the
+   arrival, and sends it with the rule to the VLM:
+   `Role: Quality Inspector … Return EXACTLY {"status":"PASS"|"FAIL"|"UNSURE","reason":…}`.
+   The reply is validated as JSON. Anything else is treated as UNSURE.
+4. PASS/FAIL creates a pending `smista(centro|destra)`. Grok reads the localised question, for example "Inspection
+   complete. Result: FAIL. A scratch is visible on the right edge. I will place it in tray C. Proceed?". **An explicit yes is
+   required again.** On UNSURE, a missing image or a model error, nothing is proposed and the operator decides ("reject
+   it" / "不合格" / "scartalo"), which is still a confirmed proposal.
+5. After the deposit, the operator puts the next part in A, presses **Part ready in tray A** (bookkeeping only) and says
+   "next part". The last rule is reused.
+
+"Stop" in any of the seven languages, the STOP button or the space bar halts at any step. A STOP during the VLM call
+discards the result's proposal. Every verdict is saved to `data/inspections/inspections.jsonl` together with the JPEG
+that was judged.
+
+The VLM never chooses a motion. It only returns PASS/FAIL/UNSURE and a reason. Trays, poses and confirmation stay in the
+deterministic gate.
+
+### Camera
+
+* `CAMERA_SOURCE=browser` (default): click **Turn webcam on** in the *Inspection camera* panel. The page streams the
+  webcam of the PC that opened it at 2.5 fps. A USB webcam on the laptop next to the arm is the simplest option.
+* `CAMERA_SOURCE=url` with `CAMERA_URL=http://<phone-ip>:8080/shot.jpg`: an Android phone running "IP Webcam" on the
+  same Wi-Fi. `CAMERA_URL=http://127.0.0.1:8710/api/frame.jpg` uses the phone page of `python -m grokarm_vision`.
+* Rehearsal without a camera: `python scripts/fake_camera.py --scratch` pushes a synthetic part.
+
+Vision model: `XAI_VISION_MODEL` (default `grok-4.7`; check the exact name in your xAI console).
+`INSPECTOR=mock MOCK_VERDICT=PASS|FAIL|UNSURE` forces the rehearsal inspector.
+
+### Languages
+
+The header language menu switches at runtime: Italiano, English, 中文, Español, Français, Deutsch, 日本語.
+
+* Grok Voice gets a new `session.update` with the language hint and the instruction to answer in that language.
+* The STOP, yes, no and uncertain phrase lists in `backend/app/safety/phrases.py` cover all seven languages, so the
+  deterministic confirmation check works in each of them (CJK matched by substring).
+* The inspection question and the VLM reason are produced in the selected language.
+* The UI is fully translated in it/en/zh. es/fr/de/ja fall back to English UI text while voice and inspection use the
+  selected language.
+
+## Layout
+
+```
+backend/app/            VOCE server: safety gate, skills, voice relay, text mode
+backend/app/vision/     inspection camera hub, Grok/mock inspector, localised texts
+backend/grokarm_vision/ calibrated phone camera + "point at that object" service (python -m grokarm_vision)
+frontend/               React UI (dist/ committed)
+config/                 robot.yaml (inspection block), poses.yaml (ispezione pose), skills.yaml (+porta_in_ispezione, smista)
+tests/                  pytest suite (python -m pytest -q)
+legacy/grokarm-ur3e/    previous version, reference only
+```
+
+## What is verified and what is not
+
+Verified: `python -m pytest -q` passes. That covers the full inspection cycle on the simulated arm, STOP during
+inspection, a missing frame, UNSURE, rule injection stripping, the seven-language phrases and the API. The browser flow
+was checked against the simulated arm with the fake camera.
+
+Not yet verified, still to do:
+
+1. **Teach the real poses.** `ispezione` and the A/B/C `*_sopra`/`*_presa` poses are URSim placeholders
+   (`verificata_reale: false`), and real mode refuses them until they are recorded on the robot with
+   `scripts/record_pose.py` by a human.
+2. Put the xAI key in `.env` and run one live inspection to confirm `XAI_VISION_MODEL` and the response latency.
+3. Run the real-arm tests (user only, hand near the E-stop): the pick height of the part in A, and that the part does
+   not slide on the fork at the camera pose.
+4. Re-run `eval/run_eval.py`. The prompt changed (inspection and languages), so the results in section 17 below are from
+   the previous prompt.
+5. Optional: connect the calibrated "point at that object" service (`grokarm_vision`) to a VOCE tool. Today it runs
+   as a separate read-only page.
+
+---
+
+# Reference: VOCE base (voice control, safety gate, URSim, evaluation)
 
 *Parla naturalmente. Il robot capisce. Tu confermi.*
 
