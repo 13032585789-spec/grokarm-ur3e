@@ -5,8 +5,8 @@
 robot:
   name: "Arm 3"
   vendor: "Universal Robots"
-  model: UNKNOWN            # e.g. UR5e — verify on the teach pendant (About)
-  polyscope_version: UNKNOWN # verify on the teach pendant (About)
+  model: "UR3 (e-Series)"   # dashboard "get robot model" on 2026-11-04
+  polyscope_version: "5.11.1.108318" # dashboard "PolyscopeVersion" on 2026-11-04
 
 # ROBOT_MODE env var overrides this. sim | ursim | real
 default_mode: ursim
@@ -18,8 +18,8 @@ connections:
     # Override with URSIM_HOST if needed.
     host: "::1"
   real:
-    host: null              # MUST be set explicitly (and real.enabled: true) to allow real mode
-    enabled: false
+    host: "192.168.7.21"    # lab Arm 3, wired (PC 192.168.7.50)
+    enabled: true
   ports:                    # official UR client interfaces
     dashboard: 29999
     secondary: 30002        # accepts URScript programs
