@@ -11,12 +11,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..config import Settings
+from ..config import LANGUAGES, Settings
 from ..safety.gate import Gate
 
 PROMPT_FILE = Path(__file__).resolve().parents[1] / "voice" / "prompt_it.md"
 
-SKILL_IDS = ["vai_a_posa", "indica", "solleva_vassoio", "appoggia_vassoio", "spingi"]
+SKILL_IDS = ["vai_a_posa", "indica", "solleva_vassoio", "appoggia_vassoio", "spingi", "smista"]
+SEQUENCE_SKILL_IDS = ["vai_a_posa", "indica", "solleva_vassoio", "appoggia_vassoio", "spingi"]
 
 
 def _params_schema(s: Settings, poses: list[str]) -> dict[str, Any]:
@@ -48,13 +49,19 @@ def tool_schemas(s: Settings, poses: list[str], *, stretch: bool = True) -> list
          "parameters": {"type": "object", "properties": {}}},
         {"type": "function", "name": "status", "description": "Stato del sistema, del robot e dei vassoi presunti.",
          "parameters": {"type": "object", "properties": {}}},
+        {"type": "function", "name": "start_inspection",
+         "description": "Avvia l'ispezione qualità: memorizza la regola e propone di portare il prossimo pezzo dal vassoio di "
+                        "ingresso davanti alla telecamera (serve la conferma). Senza regola riusa l'ultima.",
+         "parameters": {"type": "object", "properties": {"regola": {
+             "type": "string", "description": "Regola in linguaggio naturale, con le parole dell'operatore, es. "
+                                              "'scarta i pezzi con graffi o anomalie'."}}}},
     ]
     if stretch:
         tools += [
             {"type": "function", "name": "propose_sequence",
              "description": "Proponi da 2 a 5 abilità in sequenza. Ogni movimento richiede la sua conferma.",
              "parameters": {"type": "object", "properties": {"passi": {"type": "array", "minItems": 2, "maxItems": 5,
-                            "items": {"type": "object", "properties": {"skill": {"type": "string", "enum": SKILL_IDS},
+                            "items": {"type": "object", "properties": {"skill": {"type": "string", "enum": SEQUENCE_SKILL_IDS},
                                                                        "parametri": p}, "required": ["skill"]}}},
                             "required": ["passi"]}},
             {"type": "function", "name": "save_pose",
@@ -72,8 +79,13 @@ def build_prompt(s: Settings, gate: Gate) -> str:
     if s.wake_word:
         wake = (f"10. Parola di attivazione: proponi azioni solo se la frase contiene \"{s.wake_word}\". "
                 "Stop e risposte sì/no valgono sempre anche senza.")
-    return PROMPT_FILE.read_text().format(poses=", ".join(gate.reg.selectable_poses()), zones=", ".join(s.zones),
-                                          directions=", ".join(s.directions), state=state, wake=wake)
+    insp = s.inspection or {"input_zone": "sinistra", "pass_zone": "centro", "fail_zone": "destra"}
+    trays = ", ".join(f"{s.zone_label(z)} = {z}" for z in s.zones)
+    return PROMPT_FILE.read_text().format(
+        poses=", ".join(gate.reg.selectable_poses()), zones=", ".join(s.zones), directions=", ".join(s.directions),
+        state=state, wake=wake, language=LANGUAGES.get(s.lang, s.lang), trays=trays,
+        input_tray=s.zone_label(insp["input_zone"]), pass_tray=s.zone_label(insp["pass_zone"]),
+        fail_tray=s.zone_label(insp["fail_zone"]), pass_zone=insp["pass_zone"], fail_zone=insp["fail_zone"])
 
 
 async def dispatch(gate: Gate, name: str, args: dict[str, Any], *, source: str = "grok") -> dict[str, Any]:
@@ -97,6 +109,8 @@ async def dispatch(gate: Gate, name: str, args: dict[str, Any], *, source: str =
             steps = [{"skill": p.get("skill"), "params": p.get("parametri") or {}} for p in (args.get("passi") or [])
                      if isinstance(p, dict)]
             return gate.propose_sequence(steps, source=source)
+        if name == "start_inspection":
+            return gate.start_inspection(args.get("regola") or args.get("rule"), source=source)
         if name == "save_pose":
             return await gate.save_pose(str(args.get("nome") or ""))
     except Exception as e:  # pragma: no cover - defensive

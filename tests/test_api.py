@@ -28,7 +28,8 @@ def wait_gate(c, state, timeout=5):
 def test_status(client):
     s = client.get("/api/status").json()
     assert s["gate"] == "IDLE" and s["config"]["mode"] == "sim" and "xai" not in str(s["config"]).lower()
-    assert set(s["catalogue"]) == {"vai_a_posa", "indica", "solleva_vassoio", "appoggia_vassoio", "spingi"}
+    assert set(s["catalogue"]) == {"vai_a_posa", "indica", "solleva_vassoio", "appoggia_vassoio", "spingi",
+                                    "porta_in_ispezione", "smista"}
 
 
 def test_stop_without_voice_connection(client):
@@ -109,3 +110,39 @@ def test_backend_restart_never_executes_old_pending(settings):
         r = c.post("/api/text-command", json={"text": "sì"}).json()
         assert not (r["result"] or {}).get("ok")
     assert list(sim._q) == q_before   # the robot never moved
+
+
+def test_language_switch(client):
+    assert client.post("/api/language", json={"lang": "zh"}).json()["lang"] == "zh"
+    assert client.get("/api/status").json()["config"]["lang"] == "zh"
+    assert client.post("/api/language", json={"lang": "xx"}).status_code == 400
+
+
+def test_inspection_over_http_with_browser_camera(client):
+    import cv2
+    import numpy as np
+    app_settings = client.app.state.settings
+    app_settings.robot["inspection"]["settle_s"] = 0.05
+    from app.vision.inspector import MockInspector
+    client.app.state.gate.inspector = MockInspector("FAIL", delay_s=0.05)
+    frame = cv2.imencode(".jpg", np.full((60, 80, 3), 128, np.uint8))[1].tobytes()
+    assert client.post("/api/camera/frame", content=b"not an image").status_code == 400
+    assert client.post("/api/camera/frame", content=frame).json()["ok"]
+    assert client.get("/api/camera/frame.jpg").status_code == 200
+    r = client.post("/api/inspection/start", json={"rule": "Reject items with scratches"}).json()
+    assert r["ok"] and r["skill"] == "porta_in_ispezione"
+    r = client.post("/api/text-command", json={"text": "sì, procedi"}).json()
+    assert r["result"]["ok"], r
+    end = time.time() + 5
+    st = {}
+    while time.time() < end:
+        client.post("/api/camera/frame", content=frame)
+        st = client.get("/api/status").json()
+        if st["pending"] and st["pending"]["skill"] == "smista":
+            break
+        time.sleep(0.05)
+    assert st["pending"]["skill"] == "smista" and st["inspection"]["last"]["source"] == "mock"
+    assert client.get("/api/inspection/last.jpg").status_code == 200
+    r = client.post("/api/text-command", json={"text": "yes"}).json()
+    assert r["result"]["ok"] and wait_gate(client, "IDLE")
+    assert client.post("/api/world/part-ready").json()["ok"]

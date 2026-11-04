@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import logging
 import threading
 import time
@@ -26,6 +27,8 @@ from ..monitoring.events import EventBus, History, Metrics, log_event
 from ..robot.base import COMPLETED, FAILED, NOT_STARTED, STOPPED, UNKNOWN, ExecutionResult, RobotAdapter, RobotStatus
 from ..skills.registry import Registry, SkillError, ValidatedAction
 from ..skills.world import WorldModel, joints_close
+from ..vision.inspector import FAIL, PASS, UNSURE, clean_rule
+from ..vision.texts import t as tr
 from . import phrases
 
 log = logging.getLogger("voce.gate")
@@ -68,6 +71,19 @@ class PendingAction:
                 "plan_id": self.plan_id, "step": self.step_index + 1, "steps": self.step_total}
 
 
+@dataclass
+class InspectionState:
+    rule: str = ""
+    running: bool = False
+    last: dict[str, Any] | None = None
+    last_jpeg: bytes | None = None
+    counts: dict[str, int] = field(default_factory=lambda: {PASS: 0, FAIL: 0, UNSURE: 0})
+
+    def public(self) -> dict[str, Any]:
+        return {"rule": self.rule, "running": self.running, "last": self.last, "counts": dict(self.counts),
+                "has_image": self.last_jpeg is not None}
+
+
 def _err(code: str, msg: str, **kw: Any) -> dict[str, Any]:
     return {"ok": False, "esito": code, "messaggio": msg, **kw}
 
@@ -103,6 +119,13 @@ class Gate:
         self._io_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="robot-io")
         self._bg: list[asyncio.Task] = []
         self._report_cbs: list[Callable[[dict[str, Any]], Any]] = []
+        self.camera: Any = None
+        self.inspector: Any = None
+        self.inspection = InspectionState()
+        self._inspect_task: asyncio.Task | None = None
+
+    def attach_vision(self, camera: Any, inspector: Any) -> None:
+        self.camera, self.inspector = camera, inspector
 
     # ================================================================ infra ===
     def _transition(self, new: GateState, reason: str, **data: Any) -> None:
@@ -122,7 +145,9 @@ class Gate:
                 "world": self.world.snapshot(), "robot": self.robot_status.to_dict(), "robot_adapter": self.robot.name,
                 "mode": self.s.mode, "fault": self.fault_reason, "last_stop": self.last_stop,
                 "last_result": self.last_result.to_dict() if self.last_result else None,
-                "metrics": self.metrics.summary(), "history": self.history.list()[:30]}
+                "metrics": self.metrics.summary(), "history": self.history.list()[:30],
+                "lang": self.s.lang, "inspection": self.inspection.public(),
+                "camera": self.camera.status() if self.camera else None}
 
     def on_report(self, cb: Callable[[dict[str, Any]], Any]) -> Callable[[], None]:
         self._report_cbs.append(cb)
@@ -243,12 +268,16 @@ class Gate:
             return _err("guasto", f"Sistema in GUASTO ({self.fault_reason}): serve l'intervento dell'operatore.")
         if self.state == GateState.EXECUTING:
             return _err("occupato", "Il braccio sta eseguendo un movimento: attendi il risultato o di' stop.")
+        if self.inspection.running:
+            return _err("occupato", "Ispezione visiva in corso: attendi l'esito.")
         return None
 
     def propose(self, skill: Any, params: dict[str, Any] | None, *, source: str = "grok") -> dict[str, Any]:
         b = self._blocked()
         if b:
             return b
+        if skill == "porta_in_ispezione" and not self.inspection.rule:
+            return _err("regola_mancante", "Per portare un pezzo in ispezione usa start_inspection con la regola.")
         try:
             act = self.reg.validate(skill, params, self.world)
         except SkillError as e:
@@ -263,6 +292,8 @@ class Gate:
             return b
         if not steps or len(steps) > 5:
             return _err("sequenza_non_valida", "La sequenza deve avere da 1 a 5 passi.")
+        if any(st.get("skill") in ("porta_in_ispezione", "smista") for st in steps):
+            return _err("sequenza_non_valida", "L'ispezione e lo smistamento non possono stare in una sequenza.")
         sim = self.world.copy()
         acts: list[ValidatedAction] = []
         for i, st in enumerate(steps):
@@ -432,7 +463,13 @@ class Gate:
                                   step_total=pa.step_total, remaining=pa.remaining[1:])
                 text += (f" Passo {pa.step_index + 2} di {pa.step_total} pronto ({self.pending.id}): "
                          f"{a2.conferma} Serve una NUOVA conferma.")
+            insp = self.s.inspection
+            if act.skill == "smista" and insp:
+                text += " " + tr("next_part", self.s.lang, tray=self.s.zone_label(act.params["posizione"]),
+                                 input_tray=self.s.zone_label(insp["input_zone"]))
             self._report("completato", text, result=res.to_dict())
+            if act.skill == "porta_in_ispezione" and self.state == GateState.IDLE:
+                self._begin_inspection()
         elif res.outcome == STOPPED:
             for _ in range(20):           # program state can lag the halt by a few ms: report observed standstill
                 if not st.moving:
@@ -565,6 +602,148 @@ class Gate:
         self.history.add(kind="ripristino", operator=operator, previous=prev.value)
         self._report("ripristino", f"Sistema ripristinato dall'operatore. Robot {self._robot_brief(st)}.")
         return {"ok": True, "esito": "ripristinato", "gate": self.state.value, "robot": st.to_dict()}
+
+    # ========================================================== inspection ===
+    def start_inspection(self, rule: str | None, *, source: str = "grok") -> dict[str, Any]:
+        """Set the natural-language rule and bring the next part to the camera (that motion needs a confirmation).
+
+        If the part is already held at the camera pose, inspect it again without moving."""
+        b = self._blocked()
+        if b:
+            return b
+        insp = self.s.inspection
+        if not insp:
+            return _err("ispezione_non_configurata", "Ispezione non configurata in robot.yaml.")
+        if self.camera is None or self.inspector is None:
+            return _err("telecamera_non_disponibile", "Telecamera o ispettore non disponibili.")
+        rule = clean_rule(rule) or self.inspection.rule
+        if not rule:
+            return _err("regola_mancante", "Serve la regola di ispezione, ad esempio: scarta i pezzi con graffi o "
+                                           "anomalie.")
+        self.inspection.rule = rule
+        self.history.add(kind="regola_ispezione", rule=rule, source=source)
+        self.publish_state()
+        if self.world.holding_tray and self.world.known_pose == insp["inspect_pose"]:
+            if self.state == GateState.PENDING_CONFIRMATION:
+                self.cancel(source=f"{source}:nuova_ispezione")
+            self._begin_inspection()
+            return {"ok": True, "esito": "ispezione_avviata", "regola": rule,
+                    "istruzione": "Il pezzo è già davanti alla telecamera: di' solo 'Analizzo.' L'esito arriverà in "
+                                  "un [RAPPORTO SISTEMA]."}
+        res = self.propose("porta_in_ispezione", {"posizione": insp["input_zone"]}, source=source)
+        res["regola"] = rule
+        return res
+
+    def part_ready(self, *, operator: str = "ui") -> dict[str, Any]:
+        """Operator declares a new part in the input tray (bookkeeping only, never moves the robot)."""
+        insp = self.s.inspection
+        if not insp:
+            return _err("ispezione_non_configurata", "Ispezione non configurata.")
+        if self.state == GateState.EXECUTING or self.inspection.running:
+            return _err("occupato", "Attendi la fine del movimento o dell'ispezione.")
+        if self.world.holding_tray:
+            return _err("forca_occupata", "La forca ha ancora un pezzo: deposita prima quello.")
+        self.world.trays_at.add(insp["input_zone"])
+        self.history.add(kind="pezzo_pronto", zone=insp["input_zone"], operator=operator)
+        self.publish_state()
+        return {"ok": True, "esito": "pezzo_pronto", "zona": insp["input_zone"]}
+
+    def _begin_inspection(self) -> None:
+        self.inspection.running = True
+        self.bus.publish("inspection", phase="started", rule=self.inspection.rule)
+        self.publish_state()
+        self._inspect_task = asyncio.ensure_future(self._run_inspection())
+
+    async def _wait_frame(self, after: float, deadline: float) -> Any:
+        while True:
+            frame = self.camera.store.latest()
+            if frame is not None and frame.received_at >= after:
+                return frame
+            if time.monotonic() >= deadline:
+                return None
+            await asyncio.sleep(0.1)
+
+    async def _run_inspection(self) -> None:
+        insp, lang, rule = self.s.inspection, self.s.lang, self.inspection.rule
+        settle, max_age = float(insp.get("settle_s", 0.8)), float(insp.get("max_frame_age_s", 2.0))
+        result: dict[str, Any] | None = None
+        frame = None
+        try:
+            t0 = time.monotonic()
+            await asyncio.sleep(settle)
+            frame = await self._wait_frame(t0 + settle, t0 + settle + max_age)
+            if frame is None:
+                result = {"status": "NO_FRAME", "reason": tr("no_frame", lang), "source": "camera"}
+            else:
+                loop = asyncio.get_running_loop()
+                try:
+                    r = await asyncio.wait_for(loop.run_in_executor(self._io_pool, self.inspector.inspect, frame.image,
+                                                                    rule, lang), 25)
+                    result = r.to_dict()
+                except asyncio.TimeoutError:
+                    result = {"status": UNSURE, "reason": "", "source": getattr(self.inspector, "name", "?"),
+                              "error": "timeout"}
+        finally:
+            self.inspection.running = False
+        self._finish_inspection(result, frame, rule, lang)
+
+    def _finish_inspection(self, result: dict[str, Any], frame: Any, rule: str, lang: str) -> None:
+        insp = self.s.inspection
+        status = result["status"]
+        if status == UNSURE and result.get("error") and not result.get("reason"):
+            result["reason"] = tr("vlm_error", lang, error=result["error"][:120])
+        result.update(rule=rule, at=time.time(), frame_id=frame.frame_id if frame else None)
+        self.inspection.last = result
+        if frame is not None:
+            self.inspection.last_jpeg = frame.jpeg
+        if status in self.inspection.counts:
+            self.inspection.counts[status] += 1
+        self.history.add(kind="ispezione", status=status, reason=result["reason"], rule=rule,
+                         source=result.get("source"))
+        self._log_inspection(result, frame)
+        self.bus.publish("inspection", phase="done", **result)
+        self.publish_state()
+        if self.state != GateState.IDLE:          # STOP / fault while the model was thinking: no proposal
+            return
+        if status == "NO_FRAME":
+            self._report("ispezione", result["reason"], inspection=result)
+            return
+        pass_tray, fail_tray = self.s.zone_label(insp["pass_zone"]), self.s.zone_label(insp["fail_zone"])
+        if status not in (PASS, FAIL):
+            self._report("ispezione", "ISPEZIONE INCERTA. Leggi all'operatore: " +
+                         tr("unsure", lang, reason=result["reason"], pass_tray=pass_tray, fail_tray=fail_tray) +
+                         f" Se decide, proponi smista con posizione {insp['pass_zone']} (approvato) o "
+                         f"{insp['fail_zone']} (scartato).", inspection=result)
+            return
+        zone = insp["pass_zone"] if status == PASS else insp["fail_zone"]
+        try:
+            act = self.reg.validate("smista", {"posizione": zone}, self.world)
+        except SkillError as e:
+            self._report("ispezione", f"Esito {status}: {result['reason']} Deposito non proponibile: {e}",
+                         inspection=result)
+            return
+        act.conferma = tr("question", lang, verdict=tr(f"verdict_{status}", lang), reason=result["reason"],
+                          tray=self.s.zone_label(zone))
+        res = self._set_pending(act, "inspection")
+        if not self._report_cbs:                  # no Grok session: the question is shown in the UI right now
+            self.mark_question_asked(res["action_id"])
+        self._report("ispezione", f"ISPEZIONE {status}, proposta {res['action_id']} in attesa di conferma. Leggi "
+                                  f"ESATTAMENTE all'operatore: «{act.conferma}» Poi aspetta la sua risposta; con un sì "
+                                  f"chiama confirm({res['action_id']}).",
+                     inspection=result, say=act.conferma, action_id=res["action_id"])
+
+    def _log_inspection(self, result: dict[str, Any], frame: Any) -> None:
+        try:
+            d = self.s.data_dir / "inspections"
+            d.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            if frame is not None:
+                (d / f"{stamp}-{frame.frame_id}.jpg").write_bytes(frame.jpeg)
+                result = {**result, "image": f"{stamp}-{frame.frame_id}.jpg"}
+            with (d / "inspections.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(result, ensure_ascii=False) + "\n")
+        except OSError:  # pragma: no cover
+            log.exception("could not write the inspection log")
 
     # ============================================================ P2: poses ===
     async def save_pose(self, name: str) -> dict[str, Any]:

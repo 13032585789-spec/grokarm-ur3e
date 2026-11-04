@@ -94,12 +94,13 @@ class GrokSession:
 
     def session_update(self) -> dict[str, Any]:
         terms = ["stop", "fermati", "ferma", "basta", "alt", "blocca tutto", "vassoio", "sinistra", "centro", "destra",
-                 "solleva", "appoggia", "spingi", "indica", "confermo", "annulla", "procedi"]
+                 "solleva", "appoggia", "spingi", "indica", "confermo", "annulla", "procedi", "ispezione", "scarta",
+                 "tray A", "tray B", "tray C", "inspection", "reject", "scratches", "halt", "停", "托盘", "检测"]
         for name in self.gate.reg.selectable_poses():   # pose names + aliases ("home" was heard as "ON")
             terms += [name.replace("_", " ")] + list(self.s.poses[name].get("alias", []))
         tr: dict[str, Any] = {"keyterms": list(dict.fromkeys(t[:50] for t in terms))[:100]}
-        if self.s.lang_hint:
-            tr["language_hint"] = self.s.lang_hint
+        if self.s.lang or self.s.lang_hint:
+            tr["language_hint"] = self.s.lang or self.s.lang_hint
         return {"type": "session.update", "session": {
             "instructions": build_prompt(self.s, self.gate),
             "voice": self.s.xai_voice,
@@ -119,6 +120,8 @@ class GrokSession:
         try:
             while True:
                 ev = await q.get()
+                if ev["type"] == "lang" and self.xai is not None:
+                    await self.to_xai(self.session_update())
                 if ev["type"] == "stop":
                     await self.to_client({"type": "flush"})     # stop local playback immediately
                     if self.resp_active:

@@ -78,3 +78,34 @@ skills:
     conferma: "Spingo il vassoio nella zona {posizione} verso {direzione}. Confermi?"
     risultato: "Spinta completata nella zona {posizione} verso {direzione}."
     in_caso_di_errore: fault
+
+  porta_in_ispezione:
+    descrizione: "Preleva con la forca il pezzo dal vassoio di ingresso e lo tiene davanti alla telecamera."
+    strumento: forca
+    parametri:
+      posizione: {tipo: zona}
+    precondizioni: [forca_libera, vassoio_presunto_in_zona, zona_di_ingresso]
+    sequenza:
+      - {move: movej, posa: "{posizione}_sopra"}
+      - {move: movel, posa: "{posizione}_presa"}
+      - {move: movel, posa: "{posizione}_sopra"}
+      - {move: movej, posa: "ispezione"}
+    timeout_s: 60
+    conferma: "Prelevo il pezzo dal vassoio {posizione} e lo porto davanti alla telecamera. Confermi?"
+    risultato: "Il pezzo è davanti alla telecamera."
+    in_caso_di_errore: fault
+
+  smista:
+    descrizione: "Deposita il pezzo ispezionato nel vassoio approvati o scartati."
+    strumento: forca
+    parametri:
+      posizione: {tipo: zona}
+    precondizioni: [vassoio_sulla_forca, zona_di_uscita]   # B and C are bins: several parts may land there
+    sequenza:
+      - {move: movej, posa: "{posizione}_sopra"}
+      - {move: movel, posa: "{posizione}_presa"}
+      - {move: movel, posa: "{posizione}_sopra"}
+    timeout_s: 60
+    conferma: "Deposito il pezzo nel vassoio {posizione}. Confermi?"
+    risultato: "Pezzo depositato nel vassoio {posizione}."
+    in_caso_di_errore: fault

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..safety.gate import Gate, GateState
-from .rules import Intent, parse
+from .rules import Intent, parse, parse_inspection
 
 TEXT_MODE_LABEL = "TEXT MODE — NOT VOICE"
 
@@ -27,6 +27,11 @@ class TextConversation:
         if stopped:
             self.context = None
             return self._out(text, Intent("stop"), "Fermato. Nuovi movimenti bloccati fino a RIPRISTINA.", None)
+
+        if g.pending is None:
+            insp = parse_inspection(text, holding=g.world.holding_tray)
+            if insp is not None:
+                return await self._inspection(text, insp)
 
         intent = parse(text, poses=g.s.poses, pending=g.pending is not None)
 
@@ -63,6 +68,21 @@ class TextConversation:
             return await self._propose(text, intent)
 
         return self._out(text, intent, "Non ho capito. Puoi ripetere?", None)
+
+    async def _inspection(self, text: str, intent: Intent) -> dict[str, Any]:
+        g = self.gate
+        self.context = None
+        if intent.kind == "sort":
+            insp = g.s.inspection
+            zone = insp.get("pass_zone") if intent.params["esito"] == "PASS" else insp.get("fail_zone")
+            return await self._propose(text, Intent("skill", skill="smista", params={"posizione": zone}))
+        res = g.start_inspection(intent.note or None, source="rules")
+        if res.get("ok") and res.get("action_id"):
+            g.mark_question_asked(res["action_id"])
+            return self._out(text, intent, f"Regola: «{res['regola']}». {res['frase_conferma']}", res)
+        if res.get("ok"):
+            return self._out(text, intent, f"Regola: «{res['regola']}». Analizzo il pezzo davanti alla telecamera.", res)
+        return self._out(text, intent, res.get("messaggio", "Ispezione non avviata."), res)
 
     def _map_param(self, skill: str, p: dict[str, str]) -> dict[str, str]:
         z = p.get("posizione")

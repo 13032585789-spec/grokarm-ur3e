@@ -139,3 +139,33 @@ def _skill_of(t: str) -> str | None:
         if _any(pats, t):
             return skill
     return None
+
+
+# ------------------------------------------------------------------ inspection (text mode only, not in the eval baseline)
+INSPECT_WORDS = [r"\bispezion\w*", r"\bispeziona\w*", r"\binspect\w*", r"\binspecci\w*", r"\binspecter\b",
+                 r"\bcontrol(e|ar|la) (la )?qualit\w*", r"\bpruf\w*", r"\bqualitatskontroll\w*", "检测", "检查", "质检",
+                 "検査"]
+CONTINUE_WORDS = [r"\bcontinua\w*", r"\bprossimo pezzo\b", r"\bnext (part|item|one)\b", r"\bcontinue\b",
+                  r"\bsiguiente\b", r"\bsuivant\w*", r"\bnachste\w*", r"\bweiter\b", "下一个", "继续", "次の"]
+REJECT_WORDS = [r"\bscart\w*", r"\breject\w*", r"\brechaz\w*", r"\brejet\w*", r"\baussortier\w*", "不合格", "拒绝",
+                "报废", "不良", "廃棄"]
+APPROVE_WORDS = [r"\bapprov\w*", r"\baccett\w*", r"\bpass\w*", r"\baprueb\w*", r"\bacept\w*", r"\baccept\w*",
+                 r"\bin ordnung\b", r"\bannehm\w*", "合格", "通过", "良品"]
+
+
+def parse_inspection(text: str, *, holding: bool) -> Intent | None:
+    """'Begin inspection on tray A, reject items with scratches' -> inspect(rule); 'scartalo' -> sort to the fail tray."""
+    t = _n(text)
+    if not t:
+        return None
+    if _any(INSPECT_WORDS, t):
+        has_rule = _any(REJECT_WORDS + APPROVE_WORDS, t) or len(t.split()) > 6 or len(t) > 12 and " " not in t
+        return Intent("inspect", note=text.strip() if has_rule else "")
+    if _any(CONTINUE_WORDS, t) and not _skill_of(t):
+        return Intent("inspect", note="")
+    if holding:
+        if _any(REJECT_WORDS, t):
+            return Intent("sort", params={"esito": "FAIL"})
+        if _any(APPROVE_WORDS, t):
+            return Intent("sort", params={"esito": "PASS"})
+    return None

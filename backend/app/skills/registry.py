@@ -16,6 +16,8 @@ from typing import Any
 from ..config import Settings
 from .world import WorldModel
 
+INSPECTION_PRECONDITIONS = {"zona_di_ingresso", "zona_di_uscita"}
+
 # result codes (Italian, as required by the spec)
 SKILL_SCONOSCIUTA = "skill_sconosciuta"
 RICHIESTA_AMBIGUA = "richiesta_ambigua"
@@ -37,18 +39,31 @@ class SkillError(Exception):
         return d
 
 
+_CJK_RANGE = "\u3040-\u30ff\u3400-\u9fff"
+
+
 def norm(s: Any) -> str:
-    t = unicodedata.normalize("NFKD", str(s).lower())
-    t = "".join(c for c in t if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9_ ]", " ", t)).strip()
+    t = unicodedata.normalize("NFKC", str(s)).lower()
+    t = "".join("".join(x for x in unicodedata.normalize("NFKD", c) if not unicodedata.combining(x))
+                if c < "\u0250" else c for c in t)
+    return re.sub(r"\s+", " ", re.sub(rf"[^a-z0-9_ {_CJK_RANGE}]", " ", t)).strip()
 
 
 ZONE_ALIASES = {
-    "sinistra": ["sinistra", "a sinistra", "zona sinistra", "sx", "left", "izquierda", "gauche", "links"],
+    "sinistra": ["sinistra", "a sinistra", "zona sinistra", "sx", "left", "izquierda", "gauche", "links",
+                 "左", "左边", "左侧", "左側"],
     "centro": ["centro", "centrale", "al centro", "zona centrale", "zona centro", "in mezzo", "mezzo", "center", "centre",
-               "middle", "central"],
-    "destra": ["destra", "a destra", "zona destra", "dx", "right", "derecha", "droite", "rechts"],
+               "middle", "central", "中", "中间", "中央", "真ん中"],
+    "destra": ["destra", "a destra", "zona destra", "dx", "right", "derecha", "droite", "rechts",
+               "右", "右边", "右侧", "右側"],
 }
+TRAY_WORDS = ["vassoio", "tray", "bandeja", "plateau", "schale", "托盘", "盘", "トレイ"]
+
+
+def tray_aliases(label: str) -> list[str]:
+    """'A' -> ['a', 'vassoio a', 'tray a', '托盘a', 'a盘', ...] (compared after norm())."""
+    lab = norm(label)
+    return [lab] + [f"{w} {lab}" for w in TRAY_WORDS] + [f"{w}{lab}" for w in TRAY_WORDS] + [f"{lab}{w}" for w in TRAY_WORDS]
 
 
 @dataclass(frozen=True)
@@ -131,6 +146,10 @@ class Registry:
             for canon, aliases in ZONE_ALIASES.items():
                 if canon in dom and (n == canon or n in aliases):
                     return canon
+            if tipo == "zona":
+                for z in dom:
+                    if n in tray_aliases(self.s.zone_label(z)) or n.replace(" ", "") in tray_aliases(self.s.zone_label(z)):
+                        return z
             return n if n in dom else None
         if tipo == "posa":
             for k in self.selectable_poses():
@@ -169,14 +188,25 @@ class Registry:
         self._check_preconditions(sk, resolved, world)
         motion = self.motion(sk, resolved)
         fmt = {k: v.replace("_", " ") for k, v in resolved.items()}
+        if INSPECTION_PRECONDITIONS & set(sk.precondizioni) and "posizione" in resolved:
+            fmt["posizione"] = f"{self.s.zone_label(resolved['posizione'])} ({fmt['posizione']})"
         return ValidatedAction(skill=sid, params=resolved, motion=motion, timeout_s=sk.timeout_s,
                                conferma=sk.conferma.format(**fmt), risultato=sk.risultato.format(**fmt),
                                strumento=sk.strumento)
+
+    def _io_zones(self) -> tuple[str | None, list[str]]:
+        insp = self.s.inspection
+        return insp.get("input_zone"), [z for z in (insp.get("pass_zone"), insp.get("fail_zone")) if z]
 
     def _options(self, sid: str, pname: str, tipo: str, world: WorldModel) -> list[str]:
         dom = self.domain(tipo)
         sk = self.skills[sid]
         if pname == "posizione":
+            inp, outs = self._io_zones()
+            if "zona_di_ingresso" in sk.precondizioni:
+                dom = [z for z in dom if z == inp]
+            if "zona_di_uscita" in sk.precondizioni:
+                dom = [z for z in dom if z in outs]
             if "vassoio_presunto_in_zona" in sk.precondizioni:
                 return [z for z in dom if z in world.trays_at]
             if "zona_libera" in sk.precondizioni:
@@ -184,7 +214,15 @@ class Registry:
         return dom
 
     def _check_preconditions(self, sk: Skill, p: dict[str, str], world: WorldModel) -> None:
+        inp, outs = self._io_zones()
         for pc in sk.precondizioni:
+            if pc == "zona_di_ingresso" and p["posizione"] != inp:
+                raise SkillError(PRECONDIZIONE, f"Il vassoio di ingresso è {self.s.zone_label(inp or '')} ({inp}).",
+                                 param="posizione", options=[inp] if inp else [])
+            if pc == "zona_di_uscita" and p["posizione"] not in outs:
+                raise SkillError(PRECONDIZIONE, "Il pezzo va depositato nel vassoio approvati o scartati: "
+                                 + ", ".join(f"{self.s.zone_label(z)} ({z})" for z in outs) + ".",
+                                 param="posizione", options=outs)
             if pc == "forca_libera" and world.holding_tray:
                 raise SkillError(PRECONDIZIONE, "C'è già un vassoio sulla forca: va prima appoggiato.",
                                  options=[z for z in self.s.zones if z not in world.trays_at])

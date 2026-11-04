@@ -9,16 +9,18 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .config import FRONTEND_DIST, ROOT, Settings, load_settings
+from .config import FRONTEND_DIST, LANGUAGES, ROOT, Settings, load_settings
 from .conversation.text_mode import TEXT_MODE_LABEL, TextConversation
 from .monitoring.events import EventBus, History, Metrics, log_event, setup_logging
 from .safety.gate import Gate
 from .skills.registry import Registry
+from .vision.camera import CameraHub
+from .vision.inspector import GrokInspector, MockInspector
 from .voice.grok_session import GrokSession
 
 log = logging.getLogger("voce.api")
@@ -46,6 +48,20 @@ class TextBody(BaseModel):
     request_id: str | None = Field(None, max_length=64)
 
 
+class LangBody(BaseModel):
+    lang: str = Field(..., min_length=2, max_length=5)
+
+
+class InspectionBody(BaseModel):
+    rule: str | None = Field(None, max_length=300)
+
+
+def make_inspector(s: Settings):
+    if s.inspector == "grok" and s.xai_api_key:
+        return GrokInspector(s.xai_api_key, s.xai_vision_model, s.xai_base_url)
+    return MockInspector(s.mock_verdict)
+
+
 class _Dedup:
     """Duplicate command protection by client request_id (and identical text within 1 s)."""
 
@@ -62,12 +78,14 @@ class _Dedup:
             self.seen[key] = (time.time(), value)
 
 
-def create_app(settings: Settings | None = None, adapter=None) -> FastAPI:
+def create_app(settings: Settings | None = None, adapter=None, inspector=None) -> FastAPI:
     s = settings or load_settings()
     setup_logging()
     bus, metrics, history = EventBus(), Metrics(), History()
     reg = Registry(s)
     gate = Gate(s, reg, adapter or make_adapter(s), bus, metrics, history)
+    camera = CameraHub(s)
+    gate.attach_vision(camera, inspector or make_inspector(s))
     text = TextConversation(gate)
     dedup = _Dedup()
     state: dict[str, Any] = {"voice": None, "grok_text": None, "voice_status": "disconnected"}
@@ -76,7 +94,9 @@ def create_app(settings: Settings | None = None, adapter=None) -> FastAPI:
     async def lifespan(app: FastAPI):
         log_event(log, "startup", mode=s.mode, warnings=s.warnings)
         await gate.start()                     # never resumes old pending actions (pending is in-memory only)
+        camera.start()
         yield
+        camera.stop()
         log_event(log, "shutdown")
         if state["grok_text"]:
             await state["grok_text"].close()
@@ -132,6 +152,53 @@ def create_app(settings: Settings | None = None, adapter=None) -> FastAPI:
             out = {**await text.handle(body.text), "engine": "rules"}
         dedup.put(body.request_id, out)
         return out
+
+    # ---------------------------------------------------- language/vision ---
+    @app.post("/api/language")
+    async def api_language(body: LangBody) -> dict[str, Any]:
+        lang = body.lang.lower()[:2]
+        if lang not in LANGUAGES:
+            raise HTTPException(400, f"lang must be one of {list(LANGUAGES)}")
+        s.lang = lang
+        bus.publish("lang", lang=lang)
+        gate.publish_state()
+        return {"ok": True, "lang": lang}
+
+    @app.post("/api/camera/frame")
+    async def api_camera_frame(request: Request) -> dict[str, Any]:
+        if s.camera_source != "browser":
+            raise HTTPException(409, "CAMERA_SOURCE is not 'browser'")
+        data = await request.body()
+        try:
+            frame = camera.push(data)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"ok": True, "frame_id": frame.frame_id, "size": list(frame.size)}
+
+    @app.get("/api/camera/frame.jpg")
+    async def api_camera_jpg() -> Response:
+        frame = camera.store.latest()
+        if frame is None:
+            raise HTTPException(404, "no camera frame yet")
+        return Response(frame.jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/inspection/last.jpg")
+    async def api_inspection_jpg() -> Response:
+        if gate.inspection.last_jpeg is None:
+            raise HTTPException(404, "no inspection yet")
+        return Response(gate.inspection.last_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/inspection/start")
+    async def api_inspection_start(body: InspectionBody) -> JSONResponse:
+        r = gate.start_inspection(body.rule, source="ui")
+        if r.get("ok") and r.get("action_id") and not state["voice"] and not state["grok_text"]:
+            gate.mark_question_asked(r["action_id"])
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    @app.post("/api/world/part-ready")
+    async def api_part_ready() -> JSONResponse:
+        r = gate.part_ready(operator="ui")
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
 
     @app.get("/api/eval/latest")
     async def api_eval() -> JSONResponse:

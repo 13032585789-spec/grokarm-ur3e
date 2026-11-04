@@ -1,7 +1,7 @@
 """World model. Robot state comes from feedback (verified); object state is ASSUMED.
 
-There is no camera and no tray sensor: `trays_at` and `holding_tray` are the
-software's bookkeeping of what *should* be true if every configured motion
+There is no tray sensor and the camera is only used to inspect the part held in
+front of it: `trays_at` and `holding_tray` are the software's bookkeeping of what *should* be true if every configured motion
 sequence did what it was designed to do. Never present them as sensed.
 """
 
@@ -35,6 +35,11 @@ class WorldModel:
         elif skill == "appoggia_vassoio":
             self.trays_at.add(params["posizione"])
             self.holding_tray = False
+        elif skill == "porta_in_ispezione":
+            self.trays_at.discard(params["posizione"])
+            self.holding_tray = True
+        elif skill == "smista":
+            self.holding_tray = False
         # vai_a_posa / indica / spingi: no change to the assumed object layout
         # (a push keeps the tray in its zone; direction effect is UNVERIFIED)
 
@@ -57,7 +62,7 @@ class WorldModel:
             "oggetti_presunti": {"vassoi_in_zona": sorted(self.trays_at, key=self.zones.index),
                                  "zone_libere": [z for z in self.zones if z not in self.trays_at],
                                  "vassoio_sulla_forca": self.holding_tray,
-                                 "nota": "Posizioni presunte dalla configurazione: nessuna telecamera o sensore."},
+                                 "nota": "Posizioni presunte dalla configurazione: nessun sensore sui vassoi."},
         }
 
     def copy(self) -> "WorldModel":

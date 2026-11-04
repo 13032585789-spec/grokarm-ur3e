@@ -51,6 +51,17 @@ motion:
   joint_tolerance_rad: 0.01     # actual_q vs target to accept "arrived"
   moving_speed_eps: 0.005       # |actual_qd| below this = not moving
 
+inspection:
+  # Quality-inspection cell: Tray A = input, Tray B = approved, Tray C = rejected.
+  # Zones are the workspace zones above; labels are what the operator says and sees.
+  input_zone: sinistra
+  pass_zone: centro
+  fail_zone: destra
+  labels: {sinistra: A, centro: B, destra: C}
+  inspect_pose: ispezione      # pose in poses.yaml: item held ~10 cm in front of the static camera
+  settle_s: 0.8                # hold still before the frame is taken
+  max_frame_age_s: 2.0         # refuse frames older than this (camera frozen / unplugged)
+
 safety:
   confirmation_ttl_s: 20
   execution_timeout_margin_s: 5

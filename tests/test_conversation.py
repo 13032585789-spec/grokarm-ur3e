@@ -96,3 +96,22 @@ async def test_text_stop(gate):
     r = await tc.handle("indica il centro")
     assert gate.state == GateState.STOPPED and gate.pending is None
     assert "STOP" in r["reply"] or "ripristino" in r["reply"]
+
+
+async def test_text_mode_inspection_phrases(gate):
+    from app.conversation.rules import parse_inspection
+    from app.conversation.text_mode import TextConversation
+    assert parse_inspection("Begin inspection on Tray A. Reject items with scratches or anomalies",
+                            holding=False).note.startswith("Begin")
+    assert parse_inspection("检测A托盘，有划痕的不合格", holding=False).kind == "inspect"
+    assert parse_inspection("next part", holding=False).note == ""
+    assert parse_inspection("scartalo", holding=True).params == {"esito": "FAIL"}
+    assert parse_inspection("不合格", holding=True).params == {"esito": "FAIL"}
+    assert parse_inspection("合格", holding=True).params == {"esito": "PASS"}
+    assert parse_inspection("solleva il vassoio a sinistra", holding=False) is None
+    from app.vision.camera import CameraHub
+    from app.vision.inspector import MockInspector
+    gate.attach_vision(CameraHub(gate.s), MockInspector())
+    tc = TextConversation(gate)
+    out = await tc.handle("Inizia l'ispezione sul vassoio A, scarta i pezzi con graffi")
+    assert out["result"]["skill"] == "porta_in_ispezione" and gate.pending.question_asked_at is not None

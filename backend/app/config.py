@@ -18,6 +18,9 @@ LOG_DIR = ROOT / "logs"
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 MODES = ("sim", "ursim", "real")
+LANGUAGES = {"it": "italiano", "en": "English", "zh": "中文", "es": "español", "fr": "français", "de": "Deutsch",
+             "ja": "日本語"}
+CAMERA_SOURCES = ("browser", "url")
 
 
 class ConfigError(Exception):
@@ -35,6 +38,13 @@ class Settings:
     xai_voice: str = "eve"
     lang_hint: str | None = "it"
     wake_word: str | None = None
+    lang: str = "it"                      # operator language (UI switch); Grok speaks and the VLM answers in it
+    camera_source: str = "browser"        # browser = webcam frames pushed by the UI; url = snapshot URL polled
+    camera_url: str | None = None
+    inspector: str = "grok"               # grok | mock
+    mock_verdict: str = "FAIL"            # mock inspector answer (PASS | FAIL | UNSURE), for rehearsal only
+    xai_vision_model: str = "grok-4.7"
+    xai_base_url: str = "https://api.x.ai/v1"
     host: str = "127.0.0.1"
     port: int = 8000
     config_dir: Path = CONFIG_DIR
@@ -49,6 +59,13 @@ class Settings:
     @property
     def directions(self) -> list[str]:
         return list(self.robot["workspace"]["push_directions"])
+
+    @property
+    def inspection(self) -> dict[str, Any]:
+        return dict(self.robot.get("inspection") or {})
+
+    def zone_label(self, zone: str) -> str:
+        return str((self.inspection.get("labels") or {}).get(zone, zone))
 
     @property
     def ttl_s(self) -> float:
@@ -69,7 +86,9 @@ class Settings:
         return {"mode": self.mode, "robot_name": r.get("name"), "robot_model": r.get("model"),
                 "polyscope": r.get("polyscope_version"), "zones": self.zones, "directions": self.directions,
                 "ttl_s": self.ttl_s, "grok_model": self.xai_model, "grok_configured": bool(self.xai_api_key),
-                "warnings": self.warnings}
+                "warnings": self.warnings, "lang": self.lang, "languages": LANGUAGES,
+                "camera_source": self.camera_source, "inspector": self.inspector,
+                "inspection": {k: self.inspection.get(k) for k in ("input_zone", "pass_zone", "fail_zone", "labels")}}
 
 
 def _load_yaml(name: str, config_dir: Path) -> dict[str, Any]:
@@ -103,6 +122,13 @@ def load_settings(mode: str | None = None, *, config_dir: Path = CONFIG_DIR, dat
         xai_voice=os.getenv("XAI_VOICE", "eve"),
         lang_hint=(os.getenv("LANG_HINT", "it") or None),
         wake_word=(os.getenv("WAKE_WORD") or None),
+        lang=(os.getenv("UI_LANG") or os.getenv("LANG_HINT") or "it").strip().lower()[:2],
+        camera_source=(os.getenv("CAMERA_SOURCE") or "browser").strip().lower(),
+        camera_url=(os.getenv("CAMERA_URL") or None),
+        inspector=(os.getenv("INSPECTOR") or ("grok" if os.getenv("XAI_API_KEY") else "mock")).strip().lower(),
+        mock_verdict=(os.getenv("MOCK_VERDICT") or "FAIL").strip().upper(),
+        xai_vision_model=os.getenv("XAI_VISION_MODEL", "grok-4.7"),
+        xai_base_url=os.getenv("XAI_BASE_URL", "https://api.x.ai/v1").rstrip("/"),
         host=os.getenv("HOST", "127.0.0.1"),
         port=int(os.getenv("PORT", "8000")),
         config_dir=config_dir, data_dir=data_dir,
@@ -123,6 +149,23 @@ def validate(s: Settings) -> None:
     for z in ws.get("trays_assumed_at", []):
         if z not in ws["zones"]:
             raise ConfigError(f"trays_assumed_at contains unknown zone {z!r}")
+    if s.lang not in LANGUAGES:
+        raise ConfigError(f"UI_LANG/LANG_HINT must be one of {list(LANGUAGES)}, got {s.lang!r}")
+    if s.camera_source not in CAMERA_SOURCES:
+        raise ConfigError(f"CAMERA_SOURCE must be one of {CAMERA_SOURCES}, got {s.camera_source!r}")
+    if s.camera_source == "url" and not s.camera_url:
+        raise ConfigError("CAMERA_SOURCE=url requires CAMERA_URL (e.g. http://<phone-ip>:8080/shot.jpg)")
+    if s.inspector not in ("grok", "mock"):
+        raise ConfigError(f"INSPECTOR must be grok or mock, got {s.inspector!r}")
+    insp = s.robot.get("inspection")
+    if insp:
+        for k in ("input_zone", "pass_zone", "fail_zone"):
+            if insp.get(k) not in ws["zones"]:
+                raise ConfigError(f"inspection.{k} must be one of the workspace zones, got {insp.get(k)!r}")
+        if len({insp["input_zone"], insp["pass_zone"], insp["fail_zone"]}) != 3:
+            raise ConfigError("inspection input/pass/fail zones must be three different zones")
+        if insp.get("inspect_pose") not in s.poses:
+            raise ConfigError(f"inspection.inspect_pose {insp.get('inspect_pose')!r} missing in poses.yaml")
     if s.mode not in s.robot.get("motion", {}):
         raise ConfigError(f"motion.{s.mode} missing in robot.yaml")
 
