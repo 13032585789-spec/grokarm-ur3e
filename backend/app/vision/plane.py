@@ -5,8 +5,8 @@ only, the cup point is the base of the colour mask, and a missing tape is not
 invented. The tapes on this table are orange. There is no gripper, so this
 module never builds a grasp pose and never moves the robot.
 
-Image right is robot left (negative Y). Image bottom is the front edge
-(negative X). The robot coordinates are the taught tape touches, not values
+Image top is robot negative Y, image right is the front edge (negative X)
+(checked against the real gripper with scripts/check_plane.py). The robot coordinates are the taught tape touches, not values
 read out of the picture.
 """
 
@@ -32,7 +32,7 @@ TAUGHT_TAPE_M: dict[str, tuple[float, float]] = {
     "前左": (-0.2699, -0.2750),
 }
 # Image corners under the fixed camera: top-left, top-right, bottom-left, bottom-right.
-IMAGE_CORNER = {"后右": "tl", "后左": "tr", "前右": "bl", "前左": "br"}
+IMAGE_CORNER = {"后左": "tl", "前左": "tr", "后右": "bl", "前右": "br"}   # checked 2026-11-05 with scripts/check_plane.py: the old guess was 90 deg off
 
 
 def eye(image: np.ndarray) -> np.ndarray:
