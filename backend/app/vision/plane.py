@@ -185,9 +185,15 @@ def _footprint_on(mask: np.ndarray | None, image: np.ndarray, keep: Keep | None 
     hits = _blobs(mask, image, keep)
     if not hits:
         return None
-    if len(hits) > 1 and hits[0][0] < hits[1][0] * 3:
-        return None   # two similar blobs of this colour on the table: ambiguous
-    return hits[0][1], hits[0][2]
+    # Pieces of the same cup (rim, logo, shadow split) are one cup: drop blobs next to a bigger one.
+    near = 0.07 * float(np.hypot(image.shape[1], image.shape[0]))
+    cups: list = []
+    for h in hits:
+        if not any(np.hypot(h[1] - c[1], h[2] - c[2]) < near for c in cups):
+            cups.append(h)
+    if len(cups) > 1 and cups[0][0] < cups[1][0] * 3:
+        return None   # two separate cups of this colour on the table: ambiguous
+    return cups[0][1], cups[0][2]
 
 
 @dataclass

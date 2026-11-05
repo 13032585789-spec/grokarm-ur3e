@@ -244,7 +244,7 @@ APPROVE_WORDS = [r"\bapprov\w*", r"\baccett\w*", r"\bpass\w*", r"\baprueb\w*", r
 
 
 POINT_WORDS = [r"\bindic\w*", r"\bpunta\w*", r"\bmostra\w*", r"\bpoint\w*", r"\bshow\w*", r"\bsenal\w*",
-               r"\bmontre\w*", r"\bzeig\w*", "指", "找", "哪"]
+               r"\bmontre\w*", r"\bzeig\w*", r"\bsopra\b", r"\babove\b", r"\bhover\w*", "指", "找", "哪", "上方", "上面"]
 
 
 def parse_cup(text: str) -> Intent | None:
@@ -259,7 +259,7 @@ def parse_cup(text: str) -> Intent | None:
 
 TOUCH_WORDS = [r"\btocc\w*", r"\btouch\w*", r"\btoca\w*", r"\btouche\w*", r"\bberuhr\w*", r"\breach\w*",
                r"\braggiung\w*", "碰", "触", "摸", "触れ", "タッチ"]
-CUP_NOUNS = [r"\bbicchier\w*", r"\bcups?\b", r"\bbecher\b", r"\bvaso\b", "纸杯", "杯子", "コップ"]
+CUP_NOUNS = [r"\bbicchier\w*", r"\bcups?\b", r"\bbecher\b", r"\bvaso\b", "纸杯", "杯子", "水杯", "コップ"]
 GRAB_WORDS = [r"\bprend\w*", r"\bafferr\w*", r"\bgrab\w*", r"\bpick\w*", r"\bsolleva\w*", r"\balza\w*",
               r"\blift\w*", r"\bcoge\w*", "拿", "抓", "托", "举", "提起", "夹", "掴"]
 PLACE_WORDS = [r"\bposal\w*", r"\bmettilo giu\b", r"\bput (it )?(back )?down\b", "放下", "放回", "置いて"]

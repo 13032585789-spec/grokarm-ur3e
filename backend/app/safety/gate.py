@@ -570,6 +570,9 @@ class Gate:
         c = c if c in ALL_COLOURS else colour_of(c)
         if c is None:
             return _err("richiesta_ambigua", "Di che colore è il bicchiere?", param="colore", opzioni_valide=ALL_COLOURS)
+        plane = self.plane()
+        if plane is not None:   # four-tape table: hover just above the cup (the gripper hangs below the wrist)
+            return await self._point_on_plane(c, plane, source)
         if not self.table_cal.ready:
             return _err("non_calibrato", tr("marker_need", self.s.lang))
         scan = self.scan_cups()
