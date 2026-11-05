@@ -383,6 +383,28 @@ class Gate:
         return self._propose_computed("sequenza", {"passi": str(len(parsed))}, plan, q0, phrase,
                                       f"Sequenza di {len(parsed)} movimenti completata.", source)
 
+    async def point_at_saved_cup(self, *, source: str = "ui") -> dict[str, Any]:
+        """Propose the hover written in the temporary calibration. Does not confirm and does not move."""
+        b = self._blocked()
+        if b:
+            return b
+        path = self.s.data_dir / "table_calibration.temporary.json"
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            xy = tuple(float(v) for v in saved["cup_xy_m"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return _err("non_calibrato", "没有这次的临时标定。")
+        q = await self._joints_now()
+        if isinstance(q, dict):
+            return q
+        try:
+            plan = self.planner.point_above(q, xy)
+        except SkillError as e:
+            return e.to_dict()
+        phrase = "先把腕部抬高并转到朝下，再水平绕到杯子上方停下，不往下压。可以吗？"
+        return self._propose_computed("indica_bicchiere", {}, plan, q, phrase,
+                                      "Polso sopra il bicchiere, senza scendere.", source)
+
     async def touch_cup(self, colour: Any, *, zone: Any = None, source: str = "grok") -> dict[str, Any]:
         """Find the cup in the calibrated camera image and propose: above it, slow descent to the rim, back up."""
         b = self._blocked()
@@ -836,9 +858,15 @@ class Gate:
         self.utterance = u
         return u
 
+    def _is_stop_now(self, text: str | None) -> bool:
+        """While the arm moves, panic words ("no!", "wait!") also stop it; otherwise the normal STOP words."""
+        if self.state == GateState.EXECUTING:
+            return phrases.is_motion_stop(text)
+        return phrases.is_stop(text)
+
     def note_transcript(self, text: str | None, *, final: bool = True, source: str = "voice") -> bool:
         """Operator transcript. Returns True if it triggered STOP (handled independently of Grok)."""
-        stop = phrases.is_stop(text)
+        stop = self._is_stop_now(text)
         if final:
             u = self.utterance
             if u is None or u.text is not None or u.source != source:
@@ -853,7 +881,7 @@ class Gate:
 
     def note_partial(self, text: str | None, *, source: str = "voice") -> bool:
         """Interim transcript: only used to catch STOP as early as possible."""
-        if phrases.is_stop(text) and self.state != GateState.STOPPED:
+        if self._is_stop_now(text) and self.state != GateState.STOPPED:
             asyncio.ensure_future(self.stop(f"transcript:{source}", detail=f"(parziale) {text}"))
             return True
         return False
@@ -1021,12 +1049,13 @@ class Gate:
     async def _execute(self, pa: PendingAction, cancel: threading.Event, t_req: float) -> None:
         act = pa.action
         loop = asyncio.get_running_loop()
-        timeout = act.timeout_s + float(self.s.robot["safety"].get("execution_timeout_margin_s", 5))
+        run_for = max(float(act.timeout_s), float(self.s.robot["safety"].get("motion_timeout_s", 300)))
+        timeout = run_for + float(self.s.robot["safety"].get("execution_timeout_margin_s", 5))
         res: ExecutionResult | None = None
         try:
             res = await asyncio.wait_for(
                 loop.run_in_executor(self._exec_pool, self.robot.execute, act.skill, act.params, act.motion, cancel,
-                                     act.timeout_s), timeout)
+                                     run_for), timeout)
         except asyncio.TimeoutError:
             cancel.set()
             await self._robot_stop("execution timeout")

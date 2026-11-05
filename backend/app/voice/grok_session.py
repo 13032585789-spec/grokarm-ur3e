@@ -26,7 +26,7 @@ from ..config import Settings
 from ..conversation.tools import build_prompt, dispatch, tool_schemas
 from ..monitoring.events import EventBus, Metrics, log_event
 from ..safety import phrases
-from ..safety.gate import Gate
+from ..safety.gate import Gate, GateState
 
 log = logging.getLogger("voce.grok")
 XAI_URL = "wss://api.x.ai/v1/realtime?model={model}"
@@ -180,7 +180,9 @@ class GrokSession:
                 self.gate.note_partial(txt)
             elif t == "conversation.item.input_audio_transcription.completed":
                 txt = ev.get("transcript", "")
-                if phrases.is_stop(txt) and self.t_speech_end:
+                alarm = (phrases.is_motion_stop(txt) if self.gate.state == GateState.EXECUTING
+                         else phrases.is_stop(txt))
+                if alarm and self.t_speech_end:
                     self.metrics.record("transcript_stop_detect_ms", (time.monotonic() - self.t_speech_end) * 1000)
                 self.gate.note_transcript(txt, source="voice")
             elif t == "response.created":

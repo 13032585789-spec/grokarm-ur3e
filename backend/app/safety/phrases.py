@@ -15,32 +15,40 @@ import unicodedata
 STOP_TOKENS = {
     # it
     "stop", "stoppa", "fermati", "ferma", "fermo", "fermatevi", "fermare", "fermalo", "basta", "alt", "arresta",
-    "arrestati", "arresto", "blocca", "bloccati", "bloccalo", "emergenza",
-    # en / de / fr / es
-    "halt", "stopp", "freeze", "emergency", "anhalten", "arrete", "arretez", "arreter", "detente", "detengase",
-    "parate",
+    "arrestati", "arresto", "blocca", "bloccati", "bloccalo", "emergenza", "occhio",
+    # en / de / fr / es — alarm words, including ones the 2026-11-04 persona set found missing
+    "halt", "stopp", "freeze", "emergency", "anhalten", "arrete", "arretez", "arreter", "arret", "detente",
+    "detengase", "parate", "stopping", "stopped", "stops", "abort", "careful", "whoa", "enough",
+    "aufhoren", "vorsicht", "achtung", "quieto", "cuidado", "ojo", "attention", "emergencia",
 }
 # Tokens that are also ordinary words ("para" = "for" in Spanish): STOP only in very short utterances.
 SHORT_STOP_TOKENS = {"para", "pare", "parar", "deten", "halte"}
 SHORT_STOP_MAX_TOKENS = 2
 STOP_PHRASES = ["arresta il robot", "blocca tutto", "fermati immediatamente", "fermo cosi", "halte an", "stop it",
-                "no te muevas", "ne bouge pas", "nicht bewegen", "don t move"]
-CJK_STOP = ["停", "别动", "不要动", "住手", "急停", "打住", "止まれ", "止まって", "止めて", "止めろ", "ストップ",
-            "やめて", "やめろ", "動くな"]
+                "no te muevas", "ne bouge pas", "nicht bewegen", "don t move", "bouge plus",
+                "hold it", "hold on", "look out", "watch out", "get away", "get it away"]
+CJK_STOP = ["停", "别动", "不要动", "住手", "急停", "打住", "站住", "小心", "要撞了", "停止", "非常停止",
+            "止まれ", "止まって", "止めて", "止めろ", "ストップ", "やめて", "やめろ", "動くな", "危ない"]
+# Panic words that stop the arm only while it is moving. Before motion they keep their other meaning
+# (cancel, or "not a yes").
+MOTION_STOP_TOKENS = {"no", "wait", "aspetta", "help", "aiuto", "attenzione", "attento", "nein", "non",
+                      "warte", "espera", "attends", "attendez"}
+CJK_MOTION_STOP = ["待って", "だめ", "ダメ", "不要", "等等", "等一下", "等下"]
 
 AFFIRM_TOKENS = {
     "si", "confermo", "conferma", "confermato", "confermata", "confermare", "confermi", "confermiamo", "procedi",
     "procedere", "prosegui", "vai", "ok", "okay", "certo", "esatto", "fallo", "fai", "d'accordo",
     "perfetto", "avanti", "affermativo", "accordo", "corretto", "giusto", "certamente", "assolutamente",
     "yes", "yeah", "yep", "confirm", "confirmed", "proceed", "go", "sure", "oui", "ja",
-    # es / fr / de
-    "adelante", "vale", "claro", "hazlo", "dale", "confirme", "allez", "bestatige", "bestatigt", "genau",
-    "jawohl", "klar", "mach",
+    "absolutely", "definitely", "correct", "affirmative",
+    # es / fr / de / it colloquial
+    "adelante", "vale", "claro", "hazlo", "dale", "confirme", "confirmo", "allez", "bestatige", "bestatigt", "genau",
+    "jawohl", "klar", "mach", "jo", "passt", "daje",
 }
 AFFIRM_PHRASES = ["va bene", "puoi farlo", "puoi procedere", "fai pure", "vai pure", "dai pure", "d accord",
-                  "go ahead", "do it", "vas y", "de acuerdo", "mach das"]
+                  "go ahead", "do it", "you can", "all right", "that s right", "vas y", "de acuerdo", "mach das"]
 CJK_AFFIRM = ["是", "好", "可以", "确认", "確認", "确定", "行", "对", "没问题", "执行", "继续", "开始吧", "嗯",
-              "はい", "ええ", "うん", "お願い", "どうぞ", "いいよ", "いいです", "オッケー", "了解", "実行", "進めて"]
+              "はい", "ええ", "うん", "お願い", "どうぞ", "いいよ", "オッケー", "了解", "実行", "進めて"]
 # Affirmative expressions that contain a negation character and must not count as "no".
 CJK_AFFIRM_WITH_NEGATION = ["没问题", "沒問題", "不错", "問題ない"]
 
@@ -54,14 +62,21 @@ CJK_NEGATIVE = ["不", "别", "沒", "没", "取消", "否", "算了", "いい�
 UNCERTAIN_TOKENS = {"forse", "magari", "credo", "penso", "boh", "dubbio", "aspetta", "aspettate", "attimo", "momento",
                     "sicuro", "sicura", "probabilmente", "mah", "vediamo", "dipende", "maybe", "perhaps", "wait",
                     "possibly", "quasi", "ehm", "quizas", "quiza", "espera", "creo", "attends", "attendez",
-                    "vielleicht", "warte", "glaube", "moment"}
+                    "vielleicht", "warte", "glaube", "moment", "suppose", "guess", "think", "kinda", "probably",
+                    "kidding", "joking", "but", "ma", "pero", "aber", "mais", "tranne", "igual"}
 UNCERTAIN_PHRASES = ["tal vez", "peut etre", "not sure"]
 CJK_UNCERTAIN = ["好像", "也许", "可能", "等一下", "等等", "等下", "吗", "嗎", "呢", "たぶん", "多分", "かも", "待って",
-                 "ちょっと", "かな"]
+                 "ちょっと", "かな", "但是", "可是", "不过", "でも"]
+# A "yes" inside these is not the operator agreeing (sarcasm, quoting, talking to someone else).
+NOT_A_YES_PHRASES = ["yeah right", "repeat after me", "say yes", "said yes", "already confirmed", "ripeti dopo di me", "i ll be there",
+                     "arrivo", "pretend", "ha detto", "dice si", "come no", "si tu veux", "ya claro", "c est ca"]
+CJK_NOT_A_YES = ["他说", "她说", "他說", "她說", "你说得都对", "いらない"]
 
 CANCEL_PHRASES = ["annulla", "lascia perdere", "non farlo", "cancella", "lascia stare", "non importa", "cancel",
-                  "never mind", "forget it", "cancela", "annule", "abbrechen"]
-CJK_CANCEL = ["取消", "算了", "不要", "キャンセル", "やめる", "中止"]
+                  "never mind", "nevermind", "forget it", "forget about it", "leave it", "scrap that",
+                  "cancela", "annule", "abbrechen", "lass es", "vergiss es", "dejalo", "olvidalo", "mejor no",
+                  "laisse tomber", "en fait non", "ci ho ripensato"]
+CJK_CANCEL = ["取消", "算了", "不要", "キャンセル", "やめる", "やめます", "中止", "别弄了", "不弄了", "なしで"]
 
 # Words the recogniser should expect in the language the operator selected.
 # Italian terms used to be sent in every language, which pulled Spanish/French/German/Japanese
@@ -129,6 +144,17 @@ def _cjk_has(norm_text: str, words: list[str]) -> bool:
     return bool(_CJK.search(norm_text)) and any(w in norm_text for w in words)
 
 
+def _short_stop(toks: list[str]) -> bool:
+    """Ordinary words such as Spanish "para" ("for") stop only in a very short utterance,
+    or when the whole utterance is that word repeated ("para, para, para")."""
+    hit = set(toks) & SHORT_STOP_TOKENS
+    if not hit:
+        return False
+    if len(toks) <= SHORT_STOP_MAX_TOKENS:
+        return True
+    return set(toks) <= SHORT_STOP_TOKENS
+
+
 def is_stop(text: str | None) -> bool:
     if not text:
         return False
@@ -136,7 +162,17 @@ def is_stop(text: str | None) -> bool:
     toks = tokens(text)
     if set(toks) & STOP_TOKENS or _has_phrase(n, STOP_PHRASES) or _cjk_has(n, CJK_STOP):
         return True
-    return len(toks) <= SHORT_STOP_MAX_TOKENS and bool(set(toks) & SHORT_STOP_TOKENS)
+    return _short_stop(toks)
+
+
+def is_motion_stop(text: str | None) -> bool:
+    """STOP check used while the arm is moving: is_stop, plus panic words like "no!" or "wait!"."""
+    if is_stop(text):
+        return True
+    n = normalize(text)
+    if not n:
+        return False
+    return bool(set(tokens(text)) & MOTION_STOP_TOKENS) or _cjk_has(n, CJK_MOTION_STOP)
 
 
 def is_cancel(text: str | None) -> bool:
@@ -145,6 +181,11 @@ def is_cancel(text: str | None) -> bool:
         return False
     return (_has_phrase(n, CANCEL_PHRASES) or tokens(text) in (["no"], ["non"], ["nein"]) or n.startswith("no ")
             or _cjk_has(n, CJK_CANCEL))
+
+
+def _hesitant(text: str | None) -> bool:
+    """A trailing pause ("yes…", "na ja…") is not a clean yes."""
+    return bool(text) and ("…" in text or "..." in text)
 
 
 def confirmation_verdict(text: str | None) -> str:
@@ -160,7 +201,8 @@ def confirmation_verdict(text: str | None) -> str:
         cjk_neg_text = cjk_neg_text.replace(phrase, " ")
     if toks & NEGATIVE_TOKENS or _cjk_has(cjk_neg_text, CJK_NEGATIVE):
         return NEGATIVE
-    if toks & UNCERTAIN_TOKENS or "?" in n or _has_phrase(n, UNCERTAIN_PHRASES) or _cjk_has(n, CJK_UNCERTAIN):
+    if (toks & UNCERTAIN_TOKENS or "?" in n or _hesitant(text) or _has_phrase(n, UNCERTAIN_PHRASES)
+            or _has_phrase(n, NOT_A_YES_PHRASES) or _cjk_has(n, CJK_UNCERTAIN) or _cjk_has(n, CJK_NOT_A_YES)):
         return UNCERTAIN
     if toks & AFFIRM_TOKENS or _has_phrase(n, AFFIRM_PHRASES) or _cjk_has(n, CJK_AFFIRM + CJK_AFFIRM_WITH_NEGATION):
         return VALID

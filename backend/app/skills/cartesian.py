@@ -16,7 +16,7 @@ from typing import Any, Sequence
 import numpy as np
 
 from ..config import Settings
-from ..robot.kinematics import IKError, Kinematics, model_of
+from ..robot.kinematics import IKError, Kinematics, model_of, rotvec
 from .registry import MotionStep, SkillError, norm
 
 FUORI_LIMITI = "fuori_dai_limiti"
@@ -370,6 +370,153 @@ class Planner:
                     info={"dx_mm": round((target[0] - here[0]) * 1000, 1),
                           "dy_mm": round((target[1] - here[1]) * 1000, 1),
                           "lift_mm": round(lift * 1000, 1)})
+
+    def _flange_pose(self, q: Sequence[float]) -> tuple[np.ndarray, np.ndarray]:
+        T = self.kin.fk(q)
+        R = np.array(T[:3, :3], dtype=float)
+        return T[:3, 3] - R @ self.kin.tcp, R
+
+    def _tool_down(self, R: np.ndarray) -> np.ndarray:
+        """Tool Z straight down, keeping the current tool heading in the horizontal plane."""
+        z = np.array([0.0, 0.0, -1.0])
+        x = np.array(R[:3, 0], dtype=float)
+        x[2] = 0.0
+        if float(np.linalg.norm(x)) < 0.25:
+            y = np.array(R[:3, 1], dtype=float)
+            y[2] = 0.0
+            x = np.cross(y, z) if float(np.linalg.norm(y)) >= 0.25 else np.array([1.0, 0.0, 0.0])
+        x = x / np.linalg.norm(x)
+        y = np.cross(z, x)
+        y = y / np.linalg.norm(y)
+        x = np.cross(y, z)
+        return np.column_stack((x, y, z))
+
+    def _pose_at_flange(self, R: np.ndarray, flange: np.ndarray) -> np.ndarray:
+        M = np.eye(4)
+        M[:3, :3] = R
+        M[:3, 3] = np.asarray(flange, dtype=float) + R @ self.kin.tcp
+        return M
+
+    def _slerp(self, R0: np.ndarray, R1: np.ndarray, t: float) -> np.ndarray:
+        w = rotvec(R1 @ R0.T)
+        th = float(np.linalg.norm(w))
+        if th < 1e-8:
+            return np.array(R1, dtype=float)
+        axis = w / th
+        a = th * float(t)
+        K = np.array([[0.0, -axis[2], axis[1]], [axis[2], 0.0, -axis[0]], [-axis[1], axis[0], 0.0]])
+        return (np.eye(3) + math.sin(a) * K + (1.0 - math.cos(a)) * (K @ K)) @ R0
+
+    def _check_body(self, q: Sequence[float], z_floor: float) -> None:
+        """Link and flange clearance. The 15 cm tool length is virtual, so it is not treated as a rigid needle."""
+        lim = 2 * math.pi - 0.05
+        if any(abs(float(x)) > lim for x in q):
+            raise SkillError(FUORI_LIMITI, "Un giunto supererebbe il suo limite di rotazione.")
+        for frame in self.kin.frames(q)[2:]:
+            if frame[2, 3] < 0.04:
+                raise SkillError(FUORI_LIMITI, "Una parte del braccio passerebbe troppo vicina al tavolo.")
+        flange, _ = self._flange_pose(q)
+        if float(flange[2]) < z_floor - 1e-4:
+            raise SkillError(FUORI_LIMITI, "La traiettoria scenderebbe verso il tavolo.")
+        radius = math.hypot(float(flange[0]), float(flange[1]))
+        if radius > float(self.rel.get("reach_max_m", 0.5)):
+            raise SkillError(FUORI_LIMITI, f"Troppo lontano dalla base ({radius * 1000:.0f} mm).")
+        if radius < float(self.rel.get("reach_min_m", 0.12)):
+            raise SkillError(FUORI_LIMITI, "Troppo vicino all'asse della base.")
+
+    def _flange_segment(self, q: Sequence[float], R0: np.ndarray, f0: np.ndarray, R1: np.ndarray, f1: np.ndarray,
+                        limit: float, z_floor: float, depth: int = 0) -> list[np.ndarray]:
+        """Joint steps from one flange pose to the next. Splits until every step stays within the joint limit."""
+        try:
+            q1 = self.kin.ik(self._pose_at_flange(R1, f1), q)
+        except IKError:
+            q1 = None
+        if q1 is not None and float(np.max(np.abs(q1 - np.asarray(q, dtype=float)))) <= limit + 1e-6:
+            a = np.asarray(q, dtype=float)
+            for i in range(1, 5):
+                self._check_body(a + (q1 - a) * i / 4.0, z_floor)
+            return [q1]
+        if depth >= 6:
+            raise SkillError(FUORI_LIMITI, "Servirebbe una grande rotazione dei giunti: movimento rifiutato.")
+        mid_R = self._slerp(R0, R1, 0.5)
+        mid_f = (np.asarray(f0, dtype=float) + np.asarray(f1, dtype=float)) / 2.0
+        left = self._flange_segment(q, R0, f0, mid_R, mid_f, limit, z_floor, depth + 1)
+        right = self._flange_segment(left[-1], mid_R, mid_f, R1, f1, limit, z_floor, depth + 1)
+        return left + right
+
+    def point_above(self, q: Sequence[float], xy: tuple[float, float], flange_z: float = 0.16) -> Plan:
+        """From the current pose: raise the flange, turn the tool straight down, arc across, stop above xy.
+
+        The flange never goes lower than where it already is, and the arc stays at the higher of that height
+        and ``flange_z``. Turning the wrist in joint space (movej) is what leaves a sideways tool; a Cartesian
+        move through that wrist pose is not used. The arm still refuses a step that would hit the table or
+        need a large joint jump.
+        """
+        q = np.array(q, dtype=float)
+        limit = float(self.rel.get("max_joint_change_rad", 0.8))
+        flange, R = self._flange_pose(q)
+        R_start = np.array(R, dtype=float)
+        hold = max(float(flange_z), float(flange[2]))
+        z_floor = float(flange[2]) - 0.01
+        level: list[np.ndarray] = []
+        target = np.array(flange, dtype=float)
+        target[2] = hold
+        down = self._tool_down(R)
+        tilt = float(np.degrees(np.arccos(np.clip(-float(R[2, 2]), -1.0, 1.0))))
+        if tilt > 20.0 or float(flange[2]) < float(flange_z) - 0.005:
+            if abs(float(target[2]) - float(flange[2])) > 0.005:
+                level.extend(self._flange_segment(q, R, flange, R, target, limit, z_floor))
+                q = level[-1]
+                flange, R = self._flange_pose(q)
+            if float(np.linalg.norm(rotvec(down @ R.T))) > math.radians(8):
+                level.extend(self._flange_segment(q, R, flange, down, target, limit, z_floor))
+                q = level[-1]
+                flange, R = self._flange_pose(q)
+        tilt = float(np.degrees(np.arccos(np.clip(-float(R[2, 2]), -1.0, 1.0))))
+        if tilt > 20.0:
+            raise SkillError(FUORI_LIMITI, "La punta non è verticale: non parto da questa postura.")
+        hover_z = hold + float(R[2, 2]) * float(self.kin.tcp[2])
+        start = self.kin.tip(q).copy()
+        a0, r0 = math.atan2(float(start[1]), float(start[0])), math.hypot(float(start[0]), float(start[1]))
+        a1, r1 = math.atan2(float(xy[1]), float(xy[0])), math.hypot(float(xy[0]), float(xy[1]))
+        da = (a1 - a0 + math.pi) % (2 * math.pi) - math.pi
+        n_arc = max(1, int(math.ceil(abs(da) / 0.35)))
+        wps = []
+        if abs(hover_z - float(start[2])) > 0.003:
+            lifted = start.copy()
+            lifted[2] = hover_z
+            wps.append(lifted)
+        for i in range(1, n_arc + 1):
+            t = i / n_arc
+            a, rad = a0 + da * t, r0 + (r1 - r0) * t
+            wps.append(np.array([rad * math.cos(a), rad * math.sin(a), hover_z]))
+        joints = []
+        q_cur = q
+        for xyz in wps:
+            M = np.eye(4)
+            M[:3, :3] = R
+            M[:3, 3] = xyz
+            q_next = self._ik(M, q_cur, limit)
+            self._check(q_next, 0.0, tip_clearance=0.0)
+            for frame in self.kin.frames(q_next)[2:]:
+                if frame[2, 3] < 0.04:
+                    raise SkillError(FUORI_LIMITI, "Una parte del braccio passerebbe troppo vicina al tavolo.")
+            got, _ = self._flange_pose(q_next)
+            if float(got[2]) < hold - 0.02:
+                raise SkillError(FUORI_LIMITI, "La traiettoria scenderebbe verso il tavolo.")
+            joints.append(q_next)
+            q_cur = q_next
+        m = self._speeds()
+        slow = min(m["linear_speed"], 0.05)
+        r = lambda v: tuple(round(float(x), 6) for x in v)  # noqa: E731
+        motion = [MotionStep("movej", None, r(qq), m["joint_speed"], m["joint_accel"]) for qq in level]
+        motion += [MotionStep("movel", None, r(qq), slow, m["linear_accel"]) for qq in joints]
+        length = abs(hold - z_floor) + abs(da) * max(r0, r1, 0.05)
+        level_deg = math.degrees(float(np.linalg.norm(rotvec(R @ R_start.T))))
+        return Plan(motion, timeout_s=length / max(slow, 1e-3) * 3 + 10 + len(level) * 2,
+                    info={"xy_mm": [round(float(xy[0]) * 1000, 1), round(float(xy[1]) * 1000, 1)],
+                          "flange_z_mm": round(hold * 1000, 1), "turn_deg": round(math.degrees(da), 1),
+                          "level_deg": round(level_deg, 1)})
 
     def touch(self, q: Sequence[float], xy: tuple[float, float], cal: Any, height_m: float | None = None) -> Plan:
         """Above the point, slow straight descent to the object's top, back up. Tool orientation = calibration's."""

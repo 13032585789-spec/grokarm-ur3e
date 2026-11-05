@@ -69,9 +69,15 @@ async def run_case(engine: str, case: dict[str, Any]) -> dict[str, Any]:
             sess = GrokSession(s, gate, bus, Metrics(path=None), mode="text")
             await sess.start_text()
             send = sess.say_text
-        for ctx in case["contesto"]:
+        if case["atteso"] == "stop" and hasattr(gate.robot, "time_scale"):
+            gate.robot.time_scale = 1.0   # keep the arm moving so panic words ("no!", "wait!") are still in time
+        for i, ctx in enumerate(case["contesto"]):
             await send(ctx)
-            await _settle(gate)
+            last = i == len(case["contesto"]) - 1
+            if case["atteso"] == "stop" and last and gate.state == GateState.EXECUTING:
+                pass  # the line under test has to arrive while the arm is still moving
+            else:
+                await _settle(gate)
         setup_pending = gate.pending is not None
         n0 = len(gate.history.items)
         t0 = time.monotonic()
@@ -152,11 +158,12 @@ async def run_engine(engine: str, cases: list[dict[str, Any]], concurrency: int)
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--engines", default="rules,grok")
+    ap.add_argument("--testset", default="testset.csv", help="csv name inside eval/")
     ap.add_argument("--only", default="", help="comma-separated case ids")
     ap.add_argument("--concurrency", type=int, default=4)
     a = ap.parse_args()
     s = load_settings("sim")
-    cases = load_cases()
+    cases = load_cases(EVAL_DIR / a.testset)
     if a.only:
         cases = [c for c in cases if c["id"] in a.only.split(",")]
     RESULTS.mkdir(parents=True, exist_ok=True)

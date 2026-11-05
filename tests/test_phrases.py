@@ -67,3 +67,53 @@ def test_invalid_confirmations_multilingual(t, v):
 @pytest.mark.parametrize("t", ["取消", "算了", "キャンセル", "never mind", "nein"])
 def test_cancel_multilingual(t):
     assert is_cancel(t)
+
+
+# Gaps found with the persona test sets (eval/testset_*.csv, 2026-11-04)
+
+
+@pytest.mark.parametrize("t", ["Freeze!", "Abort!", "Emergency!", "Careful! Careful!", "Whoa whoa whoa!", "Enough!",
+                               "Hold it!", "Look out!", "Get it away from me!", "Stopping now please.", "Don't stop.",
+                               "Vorsicht!", "Achtung!", "¡Detente!", "¡Quieto!", "¡Cuidado!", "¡Ojo!", "¡Parada de emergencia!",
+                               "Arrêt d'urgence !",
+                               "Bouge plus !", "Occhio!", "Sofort aufhören!", "危ない！", "小心小心！", "站住！", "要撞了！"])
+def test_alarm_words_stop(t):
+    assert is_stop(t)
+
+
+@pytest.mark.parametrize("t", ["NO NO NO NO!", "Wait wait wait!", "Oh no oh no", "Help!", "Aspetta!", "Nein nein nein!",
+                               "Warte warte!", "¡Espera!", "Attends attends !", "Non non non !", "不要不要！", "等等等等！",
+                               "だめだめだめ！", "ちょっと待って！"])
+def test_panic_words_stop_only_while_moving(t):
+    from app.safety.phrases import is_motion_stop
+    assert is_motion_stop(t)
+    assert not is_stop(t)
+
+
+@pytest.mark.parametrize("t", ["¡Para, para, para!"])
+def test_repeated_short_stop(t):
+    assert is_stop(t)
+
+
+@pytest.mark.parametrize("t", ["Yeah right, like I'd say yes to that.", "Repeat after me: yes.", "Yes... I suppose.",
+                               "Yes, I'll be there in five minutes.", "He said yes.", "Pretend I said yes.",
+                               "Yes, but the right one.", "Sì, ma piano.", "Sí, pero despacio.", "Ja, aber langsam.",
+                               "Oui mais doucement.", "Si tu veux.", "Ya, claro.", "C'est ça, oui.", "Sì, come no.",
+                               "Ha detto di sì il mio collega.", "Igual sí.", "Na ja…", "いいです。",
+                               "はい…でも右の方で。", "行是行，但是换右边的。", "他说可以。", "对对对，你说得都对。",
+                               "The staff already confirmed, just go home."])
+def test_not_a_real_yes(t):
+    assert confirmation_verdict(t) != VALID
+
+
+@pytest.mark.parametrize("t", ["Absolutely.", "Yes yes yes, go!", "Thank you dear, yes please do.", "Confirmo.", "Jo, passt.",
+                               "Daje.", "Órale, sí.", "Genau, los.", "对对对，就这样。"])
+def test_real_yes(t):
+    assert confirmation_verdict(t) == VALID
+
+
+@pytest.mark.parametrize("t", ["Never mind.", "Forget it.", "Actually, leave it.", "Scrap that.", "Lass es.",
+                               "Vergiss es.", "Déjalo.", "Olvídalo.", "Mejor no.", "Laisse tomber.",
+                               "Non, en fait non.", "やっぱりやめます。", "なしで。", "别弄了。", "不弄了。"])
+def test_cancel_phrases_from_personas(t):
+    assert is_cancel(t)

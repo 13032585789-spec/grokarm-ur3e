@@ -253,6 +253,13 @@ def create_app(settings: Settings | None = None, adapter=None, inspector=None) -
     class ConfirmBody(BaseModel):
         action_id: str | None = None
 
+    @app.post("/api/point-cup")
+    async def api_point_cup() -> JSONResponse:
+        r = await gate.point_at_saved_cup(source="ui")
+        if r.get("ok") and r.get("action_id"):
+            gate.mark_question_asked(r["action_id"])
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
     @app.post("/api/confirm-button")
     async def api_confirm_button(body: ConfirmBody) -> JSONResponse:
         r = await gate.confirm_from_button(body.action_id)
