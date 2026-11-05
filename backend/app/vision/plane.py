@@ -44,7 +44,7 @@ def eye(image: np.ndarray) -> np.ndarray:
 
 def _orange_centers(image: np.ndarray) -> list[tuple[float, float, float]]:
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, (4, 80, 80), (22, 255, 255))
+    mask = cv2.inRange(hsv, (0, 80, 80), (22, 255, 255))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
     n, _, stats, cent = cv2.connectedComponentsWithStats(mask)
     area_img = float(image.shape[0] * image.shape[1])
@@ -150,8 +150,14 @@ def _footprint_on(mask: np.ndarray | None, image: np.ndarray) -> tuple[float, fl
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
     area_img = float(image.shape[0] * image.shape[1])
     hits = [i for i in range(1, n) if 0.0004 * area_img <= stats[i, cv2.CC_STAT_AREA] <= 0.05 * area_img]
-    if len(hits) != 1:
+    if not hits:
         return None
+    hits.sort(key=lambda i: int(stats[i, cv2.CC_STAT_AREA]), reverse=True)
+    if len(hits) > 1:
+        largest = int(stats[hits[0], cv2.CC_STAT_AREA])
+        second = int(stats[hits[1], cv2.CC_STAT_AREA])
+        if largest < second * 3:
+            return None
     ys, xs = np.where(labels == hits[0])
     cut = np.percentile(ys, 65)
     keep = ys >= cut

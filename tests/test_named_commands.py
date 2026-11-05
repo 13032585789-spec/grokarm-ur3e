@@ -41,6 +41,26 @@ def test_height_command_is_a_move_with_no_centimetre_cap(settings):
     assert plan.info["cm"] == 40.0
 
 
+def test_a_turn_can_pass_forty_five_degrees(settings):
+    planner = Planner(settings)
+    assert planner.max_deg == 360
+    q = settings.poses["attesa"]["joints"]
+    try:
+        plan = planner.rotate(q, "base", "sinistra", 90)
+    except SkillError as e:
+        assert "Al massimo" not in str(e)
+        assert e.code == "fuori_dai_limiti"
+    else:
+        assert plan.motion
+    try:
+        planner.rotate(q, "base", "sinistra", 361)
+    except SkillError as e:
+        assert e.code == "fuori_dai_limiti"
+        assert "360" in str(e)
+    else:
+        raise AssertionError("a turn past 360 degrees was accepted")
+
+
 def test_home_and_waiting_pose_keep_their_joint_list(settings):
     planner = Planner(settings)
     q = settings.poses["home"]["joints"]
