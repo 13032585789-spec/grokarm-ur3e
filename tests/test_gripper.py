@@ -49,3 +49,24 @@ def test_program_sets_the_gripper_payload(planner):
     plan = planner.grasp(Q0, (0.3, 0.0))
     script = urscript(plan.motion, "voce_prendi", planner.s.robot["gripper"])
     assert "set_payload(0.08000" in script.splitlines()[1]
+
+
+def test_gripper_into_own_arm_is_refused(planner):
+    # wrist folded so the ring swings back into the forearm
+    found = False
+    rng = np.random.default_rng(0)
+    for _ in range(3000):
+        q = rng.uniform(-3, 3, 6)
+        try:
+            planner._check_self(q, np.array([0.0, -1.0, 0.0]))
+        except SkillError:
+            found = True
+            break
+    assert found
+
+
+def test_grasp_paths_pass_self_check(planner):
+    plan = planner.grasp(Q0, (0.3, 0.0))
+    for st in plan.motion:
+        if st.joints:
+            planner._check_self(st.joints, np.array([0.0, -1.0, 0.0]))

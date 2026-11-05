@@ -228,6 +228,26 @@ class Planner:
                     pts.append(c + ro * d + sgn * hh * b)
         return pts
 
+    def _check_self(self, q: Sequence[float], axis: np.ndarray | None = None) -> None:
+        """Gripper vs the robot's own body: every beam / ring point (in front of the flange, >4.5 cm off its axis) must stay
+        outside capsules around base, upper arm, forearm and wrist 1/2 (radius self_radius_m, default 6 cm)."""
+        fr = self.kin.frames(q)
+        o = fr[-1][:3, 3]
+        rad = float(self.grip.get("self_radius_m", 0.06))
+        segs = [(fr[i][:3, 3], fr[i + 1][:3, 3]) for i in range(5)]
+        segs.append((np.zeros(3), fr[1][:3, 3]))              # base column
+        z = fr[-1][:3, 2]
+        for p in self.tool_points(q, axis):
+            v = p - o
+            ax = float(np.dot(v, z))
+            if ax < -0.005 or float(np.linalg.norm(v - ax * z)) < 0.045:
+                continue                                     # plate / wrist cover: mounted, cannot collide
+            for a, b in segs:
+                ab = b - a
+                t = float(np.clip(np.dot(p - a, ab) / max(float(np.dot(ab, ab)), 1e-9), 0.0, 1.0))
+                if float(np.linalg.norm(p - (a + ab * t))) < rad:
+                    raise SkillError(FUORI_LIMITI, "La pinza urterebbe il braccio stesso: movimento rifiutato.")
+
     def _check_tool(self, q: Sequence[float], table_z: float, obstacles: Sequence[tuple[float, float, float, float]] = (),
                     axis: np.ndarray | None = None) -> None:
         """Gripper body vs the table and vs cylinders (x, y, top_z, radius) such as cups standing on it."""
@@ -236,6 +256,7 @@ class Planner:
         floor = table_z + float(self.grip.get("table_clearance_m", 0.008))
         if axis is None and self.grip.get("offset_axis_flange") is not None:
             axis = self.offset_axis(q)
+        self._check_self(q, axis)
         for p in self.tool_points(q, axis):
             if float(p[2]) < floor - 1e-6:
                 raise SkillError(FUORI_LIMITI, f"La pinza toccherebbe il tavolo ({(float(p[2]) - table_z) * 1000:.0f} mm).")
