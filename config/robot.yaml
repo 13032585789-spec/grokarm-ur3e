@@ -63,7 +63,7 @@ gripper:
   # Find it: put the arm where the beam hangs straight down, then
   #   cd backend && python -m app.skills.mesh_model --beam-down-q <q1..q6 from the pendant, rad>
   # or turn "Beam dir." in tools/collision_viewer.html until the model matches the real part.
-  offset_axis_flange: null
+  offset_axis_flange: [0, 1, 0]
   table_clearance_m: 0.002    # ring / beam never closer than this to the table
   self_margin_m: 0.01         # ring / beam never closer than this to base, upper arm, forearm, wrist 1
   mass_kg: 0.08               # sent as set_payload before every program; WEIGH the part
