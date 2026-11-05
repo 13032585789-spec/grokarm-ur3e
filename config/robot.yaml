@@ -70,9 +70,9 @@ gripper:
   cog_m: [0.0, 0.0, 0.03]
 grasp:
   # Paper cup, MEASURE yours. The ring (inner ⌀53) only slides around the cup where it is narrower than that.
-  cup_height_m: 0.08
-  cup_bottom_diameter_m: 0.048
-  cup_top_diameter_m: 0.072
+  cup_height_m: 0.10  # NOT measured yet: set high so the ring passes over the rim
+  cup_bottom_diameter_m: 0.042
+  cup_top_diameter_m: 0.057
   entry_margin_m: 0.0005      # per side, ring vs cup while sliding in
   approach_gap_m: 0.015       # ring this far from the cup before the slide
   above_clear_m: 0.03         # ring this far above every cup rim while travelling
