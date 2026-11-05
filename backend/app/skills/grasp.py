@@ -135,17 +135,26 @@ def _try_heading(guard, g, gp, q, xy, e, hz, tz, H, zc, others, saved, reasons) 
     branches = sorted((np.asarray(b, float) for b in ik_all(guard.kin, M, q)),
                       key=lambda b: float(np.max(np.abs(b - q))))
     q_high = q_pre = q_seat = q_lift = None
+    blame: list[str] = []
+    worst = lambda x: min(guard.margins(x).items(), key=lambda kv: kv[1])[0]  # noqa: E731
     for qh in branches:   # keep the branch that is also safe down at the cup (wrist above, arm above the table)
         if not guard.config_ok(qh):
+            blame.append(f"alto:{worst(qh)}")
             continue
         qp = _flange_ik(guard, R, to_flange(ring_pre), qh)
         qs = None if qp is None else _flange_ik(guard, R, to_flange(cup), qp)
         ql = None if qs is None else _flange_ik(guard, R, to_flange(ring_lift), qs)
-        if ql is not None and all(guard.config_ok(x) for x in (qp, qs, ql)):
-            q_high, q_pre, q_seat, q_lift = qh, qp, qs, ql
-            break
+        if ql is None:
+            blame.append("ik_discesa")
+            continue
+        bad = [(n, x) for n, x in (("prima", qp), ("sul_bicchiere", qs), ("sollevato", ql)) if not guard.config_ok(x)]
+        if bad:
+            blame.append(f"{bad[0][0]}:{worst(bad[0][1])}")
+            continue
+        q_high, q_pre, q_seat, q_lift = qh, qp, qs, ql
+        break
     if q_lift is None:
-        reasons.append("nessuna_postura_sicura")
+        reasons.append("nessuna_postura_sicura:" + (max(set(blame), key=blame.count) if blame else "ik_polso"))
         return None
     box = lambda x, y, name: {"name": name, "min": [x - rtop, y - rtop, tz - 0.01],  # noqa: E731
                               "max": [x + rtop, y + rtop, tz + H]}
