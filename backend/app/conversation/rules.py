@@ -168,7 +168,10 @@ def parse_cup(text: str) -> Intent | None:
 
 
 TOUCH_WORDS = [r"\btocc\w*", r"\btouch\w*", r"\btoca\w*", r"\btouche\w*", r"\bberuhr\w*", r"\breach\w*",
-               r"\braggiung\w*", r"\bafferr\w*", r"\bgrab\w*", "碰", "触", "摸", "拿", "抓", "触れ", "タッチ"]
+               r"\braggiung\w*", "碰", "触", "摸", "触れ", "タッチ"]
+GRAB_WORDS = [r"\bprend\w*", r"\bafferr\w*", r"\bgrab\w*", r"\bpick\w*", r"\bsolleva\w*", r"\balza\w*",
+              r"\blift\w*", r"\bcoge\w*", "拿", "抓", "托", "举", "提起", "掴"]
+PLACE_WORDS = [r"\bposal\w*", r"\bmettilo giu\b", r"\bput (it )?(back )?down\b", r"\bplace\b", "放下", "放回", "置いて"]
 CUP_NOUNS = [r"\bbicchier\w*", r"\bcups?\b", r"\bbecher\b", r"\bvaso\b", "纸杯", "杯子", "コップ"]
 ROTATE_WORDS = [r"\bruot\w*", r"\bgir[aio]\w*", r"\brotat\w*", r"\bturn\w*", r"\btourne\w*", r"\bdreh\w*", "转",
                 "旋转", "回して", "回す"]
@@ -232,6 +235,12 @@ def parse_jog(text: str) -> Intent | None:
     if not t:
         return None
     colour = colour_of(text)
+    if _any(PLACE_WORDS, t) and (_any(CUP_NOUNS, t) or len(t) <= 8):
+        return Intent("place")
+    if _any(GRAB_WORDS, t) and (colour or _any(CUP_NOUNS, t)):
+        if not colour:
+            return Intent("clarify", note="cup_colour")
+        return Intent("grab", params={"colore": colour})
     if _any(TOUCH_WORDS, t) and (colour or _any(CUP_NOUNS, t)):
         if not colour:
             return Intent("clarify", note="cup_colour")
@@ -265,7 +274,7 @@ def parse_jog_batch(text: str) -> list[Intent] | None:
     intents = []
     for part in parts:
         jog = parse_jog(part)
-        if jog is None or jog.kind == "touch":
+        if jog is None or jog.kind in ("touch", "grab", "place"):
             return None
         if jog.kind == "rotate" and "verso" not in jog.params:
             return None

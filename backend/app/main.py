@@ -221,6 +221,20 @@ def create_app(settings: Settings | None = None, adapter=None, inspector=None) -
             gate.mark_question_asked(r["action_id"])
         return JSONResponse(r, status_code=200 if r.get("ok") else 409)
 
+    @app.post("/api/vision/grab")
+    async def api_grab_cup(body: TouchBody) -> JSONResponse:
+        r = await gate.grab_cup(body.colour, zone=body.zone, source="ui")
+        if r.get("ok") and r.get("action_id") and not state["voice"] and not state["grok_text"]:
+            gate.mark_question_asked(r["action_id"])
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    @app.post("/api/vision/place")
+    async def api_place_cup() -> JSONResponse:
+        r = await gate.place_cup(source="ui")
+        if r.get("ok") and r.get("action_id") and not state["voice"] and not state["grok_text"]:
+            gate.mark_question_asked(r["action_id"])
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
     @app.get("/api/calibration")
     async def api_calibration() -> dict[str, Any]:
         return {"ok": True, **gate.table_cal.public(), "tip_length_measured": gate.planner.tip_length_measured,

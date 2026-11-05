@@ -200,9 +200,20 @@ class Dashboard:
 
 
 # -------------------------------------------------------------- adapter ---
-def urscript(motion: Sequence[MotionStep], name: str = "voce_skill") -> str:
-    """Fixed program from validated steps only. Numbers are formatted from floats — no text from the conversation."""
+def _f(v: Any) -> str:
+    return f"{float(v):.5f}"
+
+
+def urscript(motion: Sequence[MotionStep], name: str = "voce_skill", gripper: dict[str, Any] | None = None) -> str:
+    """Fixed program from validated steps only. Numbers are formatted from floats — no text from the conversation.
+
+    With a gripper configured, the program first sets TCP and payload, so the controller's own collision detection
+    knows the real tool mass (a wrong payload is the classic cause of protective stops in free motion)."""
+    g = gripper if gripper and gripper.get("enabled") else None
     lines = [f"def {name}():"]
+    if g and g.get("set_payload", True):
+        cog = [float(c) for c in (g.get("cog_m") or [0, 0, 0.03])]
+        lines.append(f"  set_payload({_f(g.get('mass_kg', 0.08))}, [{', '.join(_f(c) for c in cog)}])")
     for m in motion:
         if m.move == "wait":
             lines.append(f"  sleep({float(m.seconds):.3f})")
@@ -361,7 +372,7 @@ class URAdapter:
         if cancel.is_set():
             return result(skill, params, t0, STOPPED, state(), error="fermato prima del movimento", total=total)
         try:
-            self._send_script(urscript(motion, f"voce_{skill}"))
+            self._send_script(urscript(motion, f"voce_{skill}", self.s.robot.get("gripper")))
         except OSError as e:
             return result(skill, params, t0, NOT_STARTED, state(), error=f"invio programma fallito: {e}", total=total)
 

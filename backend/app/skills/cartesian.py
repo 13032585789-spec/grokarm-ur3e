@@ -124,8 +124,12 @@ class Planner:
         tool = r.get("tool") or {}
         L = tool.get("tip_length_m")
         self.tip_length_measured = L is not None
-        self.kin = Kinematics(model_of(str((r.get("robot") or {}).get("model", "UR3e"))),
-                              (0.0, 0.0, float(L if L is not None else self.rel.get("assumed_tip_length_m", 0.15))))
+        model = model_of(str((r.get("robot") or {}).get("model", "UR3e")))
+        self.kin = Kinematics(model, (0.0, 0.0, float(L if L is not None else self.rel.get("assumed_tip_length_m", 0.15))))
+        # Physical gripper: its body is checked on every path, whatever the (virtual) pointing tip is.
+        self.grip = dict(r.get("gripper") or {})
+        self.grip_on = bool(self.grip.get("enabled"))
+        self.gsp = dict(r.get("grasp") or {})
 
     # ------------------------------------------------------------ limits ---
     @property
@@ -141,7 +145,16 @@ class Planner:
             return float(cal.table_z)
         return float(self.rel.get("table_z_m", 0.0))
 
-    def _check(self, q: Sequence[float], table_z: float, *, tip_clearance: float) -> None:
+    def _real_table_z(self, table_z: float) -> float:
+        """The table under the gripper. The planners above pass the (virtual-tip) calibration height; the gripper
+        is checked against the lower of that and the configured base-frame table."""
+        return min(float(table_z), self.grasp_table_z())
+
+    def grasp_table_z(self) -> float:
+        v = self.gsp.get("table_z_m")
+        return float(self.rel.get("table_z_m", 0.0) if v is None else v)
+
+    def _check(self, q: Sequence[float], table_z: float, *, tip_clearance: float, tool: bool = True) -> None:
         """Static checks on a joint target."""
         lim = 2 * math.pi - 0.05
         if any(abs(x) > lim for x in q):
@@ -157,11 +170,78 @@ class Planner:
         for i in (2, 3, 4, 5, 6):
             if fr[i][2, 3] < table_z + joint_clear:
                 raise SkillError(FUORI_LIMITI, "Una parte del braccio andrebbe troppo vicina al tavolo.")
+        if tool:
+            self._check_tool(q, self._real_table_z(table_z))
         r = math.hypot(tip[0], tip[1])
         if r > float(self.rel.get("reach_max_m", 0.5)):
             raise SkillError(FUORI_LIMITI, f"Troppo lontano dalla base ({r * 1000:.0f} mm).")
         if r < float(self.rel.get("reach_min_m", 0.12)):
             raise SkillError(FUORI_LIMITI, "Troppo vicino all'asse della base.")
+
+    # ----------------------------------------------------------- gripper ---
+    def gripper_reach(self) -> float:
+        """How far the gripper hangs below the flange axis (ring centre + half the ring height)."""
+        return float(self.grip.get("ring_offset_m", 0.1115)) + float(self.grip.get("ring_height_m", 0.01)) / 2
+
+    def offset_axis(self, q: Sequence[float]) -> np.ndarray | None:
+        """Beam direction in the flange frame: from config, else the flange x/y axis pointing most downward now."""
+        v = self.grip.get("offset_axis_flange")
+        if v is not None:
+            a = np.array(v, dtype=float)
+            return a / np.linalg.norm(a)
+        R = self.kin.frames(q)[-1][:3, :3]
+        best, cand = None, -1.0
+        for e in (np.array([1.0, 0, 0]), np.array([-1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, -1.0, 0])):
+            down = -float((R @ e)[2])
+            if down > cand:
+                best, cand = e, down
+        return best if cand > math.cos(math.radians(15)) else None
+
+    def tool_points(self, q: Sequence[float], axis: np.ndarray | None = None) -> list[np.ndarray]:
+        """Points on the printed gripper (base frame): flange plate rim, the wrist cover behind it, the beam and
+        the half ring. With the beam direction unknown, the beam + ring are sampled in all four directions."""
+        if not self.grip_on:
+            return []
+        F = self.kin.frames(q)[-1]
+        R, o = F[:3, :3], F[:3, 3]
+        x, y, z = R[:, 0], R[:, 1], R[:, 2]
+        g = self.grip
+        pr, wr = float(g.get("plate_radius_m", 0.0315)), float(g.get("wrist_radius_m", 0.033))
+        off, ax_ = float(g.get("ring_offset_m", 0.1115)), float(g.get("ring_axial_m", 0.012))
+        ro, hh = float(g.get("ring_outer_radius_m", 0.0335)), float(g.get("ring_height_m", 0.010)) / 2
+        pts = []
+        for k in range(12):
+            a = k * math.pi / 6
+            d = math.cos(a) * x + math.sin(a) * y
+            pts += [o + pr * d, o + z * 0.008 + pr * d, o - z * 0.04 + wr * d, o - z * 0.08 + wr * d]
+        axes = [axis] if axis is not None else [np.array(e, dtype=float) for e in
+                                                 ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0))]
+        for e in axes:
+            b = R @ e                          # beam direction (ring axis)
+            lat = np.cross(z, b)
+            pts += [o + z * 0.008 + b * (off * k / 5.0) for k in range(6)]
+            c = o + z * ax_ + b * off
+            for k in range(9):
+                a = math.pi / 2 + k * math.pi / 8  # closed back arc; mouth faces +z (along the flange axis)
+                d = math.cos(a) * z + math.sin(a) * lat
+                for sgn in (-1, 1):
+                    pts.append(c + ro * d + sgn * hh * b)
+        return pts
+
+    def _check_tool(self, q: Sequence[float], table_z: float, obstacles: Sequence[tuple[float, float, float, float]] = (),
+                    axis: np.ndarray | None = None) -> None:
+        """Gripper body vs the table and vs cylinders (x, y, top_z, radius) such as cups standing on it."""
+        if not self.grip_on:
+            return
+        floor = table_z + float(self.grip.get("table_clearance_m", 0.008))
+        if axis is None and self.grip.get("offset_axis_flange") is not None:
+            axis = self.offset_axis(q)
+        for p in self.tool_points(q, axis):
+            if float(p[2]) < floor - 1e-6:
+                raise SkillError(FUORI_LIMITI, f"La pinza toccherebbe il tavolo ({(float(p[2]) - table_z) * 1000:.0f} mm).")
+            for cx, cy, top, cr in obstacles:
+                if math.hypot(float(p[0]) - cx, float(p[1]) - cy) < cr + 0.01 and float(p[2]) < top + 0.01:
+                    raise SkillError(FUORI_LIMITI, "La pinza urterebbe il bicchiere lungo il percorso.")
 
     def _check_path(self, q0: Sequence[float], q1: Sequence[float], table_z: float, *, tip_clearance: float,
                     n: int = 12) -> None:
@@ -242,7 +322,7 @@ class Planner:
         except IKError:
             return None
         try:
-            self._check(q1, z, tip_clearance=0.0)
+            self._check(q1, z, tip_clearance=0.0, tool=False)
         except SkillError:
             return None
         tip = self.kin.tip(q1)
@@ -415,6 +495,7 @@ class Planner:
         for frame in self.kin.frames(q)[2:]:
             if frame[2, 3] < 0.04:
                 raise SkillError(FUORI_LIMITI, "Una parte del braccio passerebbe troppo vicina al tavolo.")
+        self._check_tool(q, self.grasp_table_z())
         flange, _ = self._flange_pose(q)
         if float(flange[2]) < z_floor - 1e-4:
             raise SkillError(FUORI_LIMITI, "La traiettoria scenderebbe verso il tavolo.")
@@ -497,7 +578,8 @@ class Planner:
             M[:3, :3] = R
             M[:3, 3] = xyz
             q_next = self._ik(M, q_cur, limit)
-            self._check(q_next, 0.0, tip_clearance=0.0)
+            self._check(q_next, 0.0, tip_clearance=0.0, tool=False)
+            self._check_tool(q_next, self.grasp_table_z())
             for frame in self.kin.frames(q_next)[2:]:
                 if frame[2, 3] < 0.04:
                     raise SkillError(FUORI_LIMITI, "Una parte del braccio passerebbe troppo vicina al tavolo.")
@@ -508,6 +590,9 @@ class Planner:
             q_cur = q_next
         # The 15 cm tool length is virtual. Lower the real flange to just above a 9 cm cup.
         rim = float(self.tch.get("object_height_m", 0.09)) + 0.015
+        if self.grip_on:   # the real gripper hangs below the flange: keep its fingertips above the rim
+            rim = self.grasp_table_z() + float(self.gsp.get("cup_height_m", self.tch.get("object_height_m", 0.09))) \
+                + float(self.gsp.get("above_clear_m", 0.03)) + self.gripper_reach()
         here, R_here = self._flange_pose(q_cur)
         descend: list[np.ndarray] = []
         if float(here[2]) > rim + 0.01:
@@ -546,6 +631,8 @@ class Planner:
         tz = float(cal.table_z)
         object_h = float(self.tch.get("object_height_m", 0.09) if height_m is None else height_m)
         top = tz + object_h + float(self.tch.get("touch_offset_m", 0.005))
+        if self.grip_on:   # fingertips hang below the virtual tip: keep them on the rim, not inside the cup
+            top += max(0.0, self.gripper_reach() - float(self.kin.tcp[2]))
         above = top + float(self.tch.get("approach_above_m", 0.08))
         R = cal.rot
         T_touch, T_above = np.eye(4), np.eye(4)
@@ -572,3 +659,159 @@ class Planner:
         return Plan(motion, timeout_s=dur * 2 + 10,
                     info={"xy_mm": [round(xy[0] * 1000, 1), round(xy[1] * 1000, 1)],
                           "altezza_tocco_mm": round((top - tz) * 1000, 1)})
+
+    # ------------------------------------------------------------ grasp ---
+    def _links_ok(self, q: Sequence[float], tz: float) -> None:
+        lim = 2 * math.pi - 0.05
+        if any(abs(float(x)) > lim for x in q):
+            raise SkillError(FUORI_LIMITI, "Un giunto supererebbe il suo limite di rotazione.")
+        if abs(math.sin(float(q[4]))) < float(self.rel.get("min_wrist_sin", 0.12)):
+            raise SkillError(FUORI_LIMITI, "Il polso sarebbe troppo vicino a una singolarità: movimento rifiutato.")
+        joint_clear = float(self.rel.get("joint_clearance_m", 0.04))
+        for fr in self.kin.frames(q)[2:]:
+            if fr[2, 3] < tz + joint_clear:
+                raise SkillError(FUORI_LIMITI, "Una parte del braccio andrebbe troppo vicina al tavolo.")
+
+    def _path_ok(self, q0: Sequence[float], q1: Sequence[float], tz: float, obstacles=(), n: int = 24,
+                 axis: np.ndarray | None = None) -> None:
+        a, b = np.asarray(q0, dtype=float), np.asarray(q1, dtype=float)
+        for i in range(1, n + 1):
+            qi = a + (b - a) * i / n
+            self._links_ok(qi, tz)
+            self._check_tool(qi, tz, obstacles, axis)
+
+    def _flange_ik(self, R: np.ndarray, f: np.ndarray, qnear: Sequence[float], max_change: float) -> np.ndarray:
+        M = np.eye(4)
+        M[:3, :3] = R
+        M[:3, 3] = f + R @ self.kin.tcp
+        try:
+            q1 = self.kin.ik(M, qnear)
+        except IKError:
+            q1 = None
+        if q1 is None:   # far target: walk there in small pose steps so the solver stays on its branch
+            T0 = self.kin.fk(qnear)
+            qc = np.asarray(qnear, dtype=float)
+            try:
+                for k in range(1, 21):
+                    Mk = np.eye(4)
+                    Mk[:3, :3] = self._slerp(T0[:3, :3], M[:3, :3], k / 20)
+                    Mk[:3, 3] = T0[:3, 3] + (M[:3, 3] - T0[:3, 3]) * k / 20
+                    qc = self.kin.ik(Mk, qc, iters=200)
+                q1 = qc
+            except IKError:
+                raise SkillError(FUORI_LIMITI, "Il bicchiere non è raggiungibile con la pinza da qui.")
+        if float(np.max(np.abs(q1 - np.asarray(qnear, dtype=float)))) > max_change:
+            raise SkillError(FUORI_LIMITI, "Servirebbe una grande rotazione dei giunti: avvicina prima il braccio.")
+        return q1
+
+    def cup_diameter_at(self, z_above_table: float) -> float:
+        gp = self.gsp
+        h = float(gp.get("cup_height_m", 0.08))
+        db, dt = float(gp.get("cup_bottom_diameter_m", 0.048)), float(gp.get("cup_top_diameter_m", 0.072))
+        return db + (dt - db) * max(0.0, min(1.0, z_above_table / h))
+
+    def grasp(self, q: Sequence[float], xy: tuple[float, float], *, cal: Any = None, height_m: float | None = None,
+              others: Sequence[tuple[float, float]] = ()) -> Plan:
+        """Passive half ring hanging below the flange. Orientation is computed: flange axis horizontal, pointing
+        from the base towards the cup, beam straight down. Path: up and over every cup, down BEHIND the cup,
+        ring slides around the cup's narrow bottom, straight lift (the taper wedges in the ring). Every pose and
+        every path sample is checked with the real gripper body against the table and every cup seen."""
+        if not self.grip_on:
+            raise SkillError(FUORI_LIMITI, "Nessuna pinza configurata (robot.yaml: gripper.enabled).")
+        g, gp = self.grip, self.gsp
+        q = np.asarray(q, dtype=float)
+        e = self.offset_axis(q)
+        if e is None:
+            raise SkillError(FUORI_LIMITI, "anello_sconosciuto")
+        reach = math.hypot(float(xy[0]), float(xy[1]))
+        if not float(self.rel.get("reach_min_m", 0.12)) <= reach <= float(self.rel.get("reach_max_m", 0.5)):
+            raise SkillError(FUORI_LIMITI, f"Il bicchiere è fuori portata ({reach * 1000:.0f} mm dalla base).")
+        tz = self.grasp_table_z()
+        H = float(gp.get("cup_height_m", 0.08) if height_m is None else height_m)
+        off, axial = float(g.get("ring_offset_m", 0.1115)), float(g.get("ring_axial_m", 0.012))
+        ri, ro = float(g.get("ring_inner_radius_m", 0.0265)), float(g.get("ring_outer_radius_m", 0.0335))
+        hh = float(g.get("ring_height_m", 0.010)) / 2
+        zc = tz + float(g.get("table_clearance_m", 0.003)) + hh
+        d_entry = self.cup_diameter_at(zc + hh - tz)
+        if d_entry + 2 * float(gp.get("entry_margin_m", 0.0005)) > 2 * ri:
+            raise SkillError(FUORI_LIMITI, f"anello_troppo_stretto:{d_entry * 1000:.0f}:{2 * ri * 1000:.0f}")
+        # Approach heading: start from base -> cup and search sideways; UR wrist offsets make some headings
+        # unreachable at a given point. The first heading whose whole path passes every check wins.
+        base_yaw = math.atan2(float(xy[1]), float(xy[0]))
+        last: SkillError | None = None
+        for dyaw in (0, 15, -15, 30, -30, 45, -45, 60, -60, 75, -75, 90, -90):
+            yaw = base_yaw + math.radians(dyaw)
+            try:
+                return self._grasp_heading(q, xy, e, np.array([math.cos(yaw), math.sin(yaw), 0.0]), tz, H, others)
+            except SkillError as err:
+                last = err
+        raise last if last else SkillError(FUORI_LIMITI, "Nessun percorso sicuro trovato.")
+
+    def _grasp_heading(self, q: np.ndarray, xy: tuple[float, float], e: np.ndarray, hz: np.ndarray, tz: float,
+                       H: float, others: Sequence[tuple[float, float]]) -> Plan:
+        g, gp = self.grip, self.gsp
+        off, axial = float(g.get("ring_offset_m", 0.1115)), float(g.get("ring_axial_m", 0.012))
+        ri, ro = float(g.get("ring_inner_radius_m", 0.0265)), float(g.get("ring_outer_radius_m", 0.0335))
+        hh = float(g.get("ring_height_m", 0.010)) / 2
+        zc = tz + float(g.get("table_clearance_m", 0.003)) + hh
+        d_entry = self.cup_diameter_at(zc + hh - tz)
+        down = np.array([0.0, 0.0, -1.0])
+        # R maps e -> down, z -> hz. Build from an orthonormal pair in each frame.
+        f_e, f_z = e, np.array([0.0, 0.0, 1.0])
+        f_3 = np.cross(f_z, f_e)
+        w_3 = np.cross(hz, down)
+        R = np.column_stack((down, hz, w_3)) @ np.column_stack((f_e, f_z, f_3)).T
+        ring = lambda flange: flange + hz * axial + down * off  # noqa: E731
+        to_flange = lambda c: c - hz * axial - down * off       # noqa: E731
+        cup = np.array([float(xy[0]), float(xy[1]), zc])
+        rtop = float(gp.get("cup_top_diameter_m", 0.072)) / 2
+        back = rtop + ro + float(gp.get("approach_gap_m", 0.015))
+        ring_pre = cup - hz * back
+        ring_high = ring_pre.copy()
+        ring_high[2] = tz + H + float(gp.get("above_clear_m", 0.03)) + hh
+        ring_lift = cup + np.array([0.0, 0.0, float(gp.get("lift_m", 0.08))])
+        change = float(gp.get("max_joint_change_rad", 3.2))
+        q_high = self._flange_ik(R, to_flange(ring_high), q, change)
+        q_pre = self._flange_ik(R, to_flange(ring_pre), q_high, 0.8)
+        q_seat = self._flange_ik(R, to_flange(cup), q_pre, 0.6)
+        q_lift = self._flange_ik(R, to_flange(ring_lift), q_seat, 0.6)
+        cups = [(float(xy[0]), float(xy[1]), tz + H, rtop)] + [(float(a), float(b), tz + H, rtop) for a, b in others]
+        # travel: the whole body (beam may point anywhere while turning) stays clear of table and cups
+        self._path_ok(q, q_high, tz, cups, n=40)
+        self._path_ok(q_high, q_pre, tz, cups, axis=e)
+        self._path_ok(q_pre, q_seat, tz, cups[1:], axis=e)   # slide: ring goes around the target cup
+        self._path_ok(q_seat, q_lift, tz, cups[1:], axis=e)
+        m = self._speeds()
+        slide = min(m["linear_speed"], float(gp.get("slide_speed", 0.02)))
+        up = min(m["linear_speed"], float(gp.get("lift_speed", 0.03)))
+        fast = min(m["linear_speed"], 0.05)
+        r = lambda v: tuple(round(float(x), 6) for x in v)  # noqa: E731
+        motion = [MotionStep("movej", None, r(q_high), m["joint_speed"], m["joint_accel"]),
+                  MotionStep("movel", None, r(q_pre), fast, m["linear_accel"]),
+                  MotionStep("movel", None, r(q_seat), slide, m["linear_accel"]),
+                  MotionStep("wait", seconds=0.3),
+                  MotionStep("movel", None, r(q_lift), up, m["linear_accel"])]
+        travel = float(np.max(np.abs(q_high - q))) / max(m["joint_speed"], 1e-3)
+        dur = travel + (ring_high[2] - zc) / fast + back / slide + float(gp.get("lift_m", 0.08)) / up + 2
+        plan = Plan(motion, timeout_s=dur * 2 + 15,
+                    info={"xy_mm": [round(float(xy[0]) * 1000, 1), round(float(xy[1]) * 1000, 1)],
+                          "anello_mm": round((zc - tz) * 1000, 1),
+                          "diametro_ingresso_mm": round(d_entry * 1000, 1),
+                          "sollevamento_mm": round(float(gp.get("lift_m", 0.08)) * 1000, 1),
+                          "asse_trave": [int(v) for v in e],
+                          "direzione_deg": round(math.degrees(math.atan2(float(hz[1]), float(hz[0]))), 0)})
+        plan.place = {"q_lift": r(q_lift), "q_seat": r(q_seat), "q_pre": r(q_pre), "q_high": r(q_high)}  # type: ignore[attr-defined]
+        _ = ring
+        return plan
+
+    def place(self, q: Sequence[float], held: dict[str, Any]) -> Plan:
+        """Put the carried cup back where it was picked: straight down, slide the ring out backwards, go up."""
+        if float(np.max(np.abs(np.asarray(q, dtype=float) - np.asarray(held["q_lift"], dtype=float)))) > 0.05:
+            raise SkillError(FUORI_LIMITI, "Il braccio non è più dove ha sollevato il bicchiere: posalo a mano.")
+        m = self._speeds()
+        slow = min(m["linear_speed"], float(self.gsp.get("slide_speed", 0.02)))
+        motion = [MotionStep("movel", None, tuple(held["q_seat"]), slow, m["linear_accel"]),
+                  MotionStep("wait", seconds=0.3),
+                  MotionStep("movel", None, tuple(held["q_pre"]), slow, m["linear_accel"]),
+                  MotionStep("movel", None, tuple(held["q_high"]), min(m["linear_speed"], 0.05), m["linear_accel"])]
+        return Plan(motion, timeout_s=90, info={})

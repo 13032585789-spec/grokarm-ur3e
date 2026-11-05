@@ -70,7 +70,7 @@ class SimAdapter:
 
     def _execute(self, skill, params, motion, cancel: threading.Event, timeout_s: float):
         t0 = time.time()
-        total = sum(1 for m in motion if m.move != "wait")
+        total = sum(1 for m in motion if m.move not in ("wait",))
         state = lambda: {"joints": self.current_joints(), "moving": self._moving}  # noqa: E731
         if not self.connected:
             return result(skill, params, t0, NOT_STARTED, state(), error="robot non connesso", total=total)
@@ -84,7 +84,7 @@ class SimAdapter:
         self._moving = True
         try:
             for step in motion:
-                if step.move == "wait":
+                if step.move in ("wait",):
                     end = time.time() + step.seconds / self.time_scale
                     while time.time() < end:
                         if cancel.is_set() or self._stop_evt.is_set():
