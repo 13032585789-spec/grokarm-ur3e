@@ -107,6 +107,17 @@ class TextConversation:
     async def _cup(self, text: str, intent: Intent) -> dict[str, Any]:
         g = self.gate
         self.context = None
+        if intent.kind == "scan":
+            res = g.scan_cups()
+            if not res.get("ok"):
+                return self._out(text, intent, res.get("messaggio", "摄像头不可用。"), res)
+            cups = res.get("cups") or []
+            if not cups:
+                reply = "桌面（四块胶带之间）现在没有看到彩色杯子。"
+            else:
+                parts = [f"{c.get('colore')}（{c.get('zona') or '?'}）" for c in cups]
+                reply = f"桌面上看到 {len(cups)} 个杯子：" + "，".join(parts) + "。"
+            return self._out(text, intent, reply, res)
         res = await g.point_at_cup(intent.params["colore"], source="rules")
         if res.get("ok") and res.get("esito") == "esecuzione_avviata":
             return self._out(text, intent, res.get("messaggio") or "开始。", res)

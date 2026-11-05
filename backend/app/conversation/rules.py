@@ -247,6 +247,11 @@ POINT_WORDS = [r"\bindic\w*", r"\bpunta\w*", r"\bmostra\w*", r"\bpoint\w*", r"\b
                r"\bmontre\w*", r"\bzeig\w*", r"\bsopra\b", r"\babove\b", r"\bhover\w*", "指", "找", "哪", "上方", "上面"]
 
 
+SCAN_WORDS = [r"\bquant\w*", r"\bhow many\b", r"\bsee\b", r"\bvedi\b", r"\bcount\w*", "几个", "几只", "多少", "看到", "看见",
+              "看看", "数一下", "数数", "识别", "有哪些", "有什么"]
+CUP_ANY = [r"\bbicchier\w*", r"\bcups?\b", "杯"]
+
+
 def parse_cup(text: str) -> Intent | None:
     """'indica il bicchiere rosso' / '指一下红色的纸杯' -> point_at_cup(red)."""
     from ..vision.cups import colour_of
@@ -254,6 +259,8 @@ def parse_cup(text: str) -> Intent | None:
     colour = colour_of(text)
     if colour and _any(POINT_WORDS, t):
         return Intent("cup", params={"colore": colour})
+    if _any(SCAN_WORDS, t) and (_any(CUP_NOUNS, t) or _any(CUP_ANY, t)):
+        return Intent("scan")
     return None
 
 
