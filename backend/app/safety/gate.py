@@ -470,6 +470,108 @@ class Gate:
                                 "rilevatore": scan.get("detector")}
         return res
 
+    # ============================================================ grasp ===
+    _GRAB_Q = {
+        "it": "Vedo il bicchiere {colour} a X {x} mm, Y {y} mm. Passo sopra gli altri bicchieri, scendo dietro, infilo "
+              "l'anello alla base a {ring} mm dal tavolo e lo sollevo di {lift} mm. Confermi?",
+        "en": "I see the {colour} cup at X {x} mm, Y {y} mm. I will pass above the other cups, come down behind it, slide "
+              "the ring around its base {ring} mm above the table and lift it {lift} mm. Proceed?",
+        "zh": "看到{colour}纸杯在 X {x} 毫米、Y {y} 毫米。我会从其他杯子上方过去，在它后面降下，把半圆环套在离桌面 {ring} 毫米的杯底，"
+              "再把它托起 {lift} 毫米。确认吗？",
+    }
+    _GRAB_ERR = {
+        "anello_sconosciuto": "Non so da che lato pende l'anello: metti il braccio con la flangia orizzontale e l'anello "
+                              "rivolto in basso, oppure scrivi gripper.offset_axis_flange in robot.yaml.",
+        "anello_troppo_stretto": "Il bicchiere è largo {d} mm dove passa l'anello (che ne accetta {ri}): misura il "
+                                 "bicchiere in robot.yaml (grasp.cup_bottom_diameter_m) o usa un bicchiere più stretto.",
+    }
+
+    async def grab_cup(self, colour: Any, *, zone: Any = None, source: str = "grok") -> dict[str, Any]:
+        """Find the cup in the calibrated camera and propose: over the other cups, down behind it, slide the ring
+        around its base, lift and hold. Every cup seen is an obstacle for the gripper body."""
+        b = self._blocked()
+        if b:
+            return b
+        c = str(colour or "").strip().lower()
+        c = "grey" if c == "gray" else c
+        c = c if c in ALL_COLOURS else colour_of(c)
+        if c is None:
+            return _err("richiesta_ambigua", "Di che colore è il bicchiere?", param="colore", opzioni_valide=ALL_COLOURS)
+        if not self.table_cal.ready:
+            return _err("non_calibrato", tr("marker_need", self.s.lang))
+        scan = self.scan_cups()
+        if not scan.get("ok"):
+            return scan
+        frame = self.camera.store.latest()
+        seen = [x for x in scan["cups"] if x["colore"] == c]
+        z = self.reg.normalize("zona", zone) if zone else None
+        if z:
+            seen = [x for x in seen if x["zona"] == z]
+        if not seen:
+            return _err("oggetto_non_trovato", f"Non vedo nessun bicchiere {c}.",
+                        visti=[f"{x['colore']} ({x['zona']})" for x in scan["cups"]])
+        if len(seen) > 1:
+            return _err("richiesta_ambigua", tr("cups_same_colour", self.s.lang, n=len(seen),
+                                                colour=word("colour", c, self.s.lang),
+                                                where="；".join(x.get("posto") or x["zona"] for x in seen)),
+                        param="posizione", opzioni_valide=sorted({x["zona"] for x in seen}))
+        bottom = (self.s.robot.get("touch") or {}).get("cup_point") == "bottom"
+
+        def table_xy(cup: dict[str, Any]) -> tuple[float, float]:
+            if bottom:
+                x0, y0, w, h = cup["bbox"]
+                return self.table_cal.to_xy(x0 + w / 2, y0 + h)
+            return self.table_cal.to_xy(*cup["px"])
+
+        cup = seen[0]
+        xy = table_xy(cup)
+        others = [table_xy(x) for x in scan["cups"] if x is not cup]
+        height = self._cup_height_m(frame, cup)
+        q = await self._joints_now()
+        if isinstance(q, dict):
+            return q
+        try:
+            plan = await asyncio.to_thread(self.planner.grasp, q, xy, cal=self.table_cal, height_m=height,
+                                           others=others)
+        except SkillError as e:
+            key, *nums = str(e).split(":")
+            if key in self._GRAB_ERR:
+                msg = self._GRAB_ERR[key].format(d=nums[0] if nums else "?", ri=nums[-1] if nums else "?")
+                return _err(e.code, msg)
+            self.bus.publish("proposal_rejected", skill="prendi", params={"colore": c}, result=e.to_dict())
+            return e.to_dict()
+        lang = self.s.lang if self.s.lang in self._GRAB_Q else "it"
+        x_mm, y_mm = plan.info["xy_mm"]
+        res = self._propose_computed("prendi", {"colore": c}, plan, q,
+                                     self._GRAB_Q[lang].format(colour=word("colour", c, lang), x=f"{x_mm:.0f}",
+                                                               y=f"{y_mm:.0f}", ring=f"{plan.info['anello_mm']:.0f}",
+                                                               lift=f"{plan.info['sollevamento_mm']:.0f}"),
+                                     f"Bicchiere {c} sollevato di {plan.info['sollevamento_mm']:.0f} mm.", source)
+        if res.get("ok"):
+            self._held = dict(plan.place)   # type: ignore[attr-defined]
+            res["bicchiere"] = {"colore": c, "xy_mm": [x_mm, y_mm]}
+        return res
+
+    async def place_cup(self, *, source: str = "grok") -> dict[str, Any]:
+        """Put the carried cup back down where it was picked and slide the ring out."""
+        b = self._blocked()
+        if b:
+            return b
+        held = getattr(self, "_held", None)
+        if not held:
+            return _err("precondizione_non_soddisfatta", "Non sto tenendo nessun bicchiere.")
+        q = await self._joints_now()
+        if isinstance(q, dict):
+            return q
+        try:
+            plan = self.planner.place(q, held)
+        except SkillError as e:
+            return e.to_dict()
+        conf = {"zh": "把杯子放回原处并退出半圆环。确认吗？",
+                "en": "I will put the cup back down where it was and slide the ring out. Proceed?"}.get(
+            self.s.lang, "Rimetto giù il bicchiere dove l'ho preso e sfilo l'anello. Confermi?")
+        return self._propose_computed("posa_bicchiere", {}, plan, q, conf, "Bicchiere posato.", source)
+
     # ======================================================== calibration ===
     async def calibration_add(self, u: Any, v: Any) -> dict[str, Any]:
         """Record one calibration point: pixel clicked by the operator + tip position measured on the robot NOW."""

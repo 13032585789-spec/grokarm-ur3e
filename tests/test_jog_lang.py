@@ -41,9 +41,14 @@ def test_jog_phrases(text, kind, params):
     assert jog is not None and jog.kind == kind and jog.params == params
 
 
-def test_grab_cup_is_a_touch():
-    assert parse_jog("拿到橙色纸杯").params == {"colore": "orange"}
+def test_grab_cup_is_a_grab():
+    j = parse_jog("拿到橙色纸杯")
+    assert j.kind == "grab" and j.params == {"colore": "orange"}
+    assert parse_jog("把蓝色杯子托起来").kind == "grab"
+    assert parse_jog("pick up the red cup").kind == "grab"
     assert parse_jog("拿到这个纸杯").note == "cup_colour"
+    assert parse_jog("tocca il bicchiere rosso").kind == "touch"
+    assert parse_jog("放下杯子").kind == "place"
     assert parse_jog("solleva il vassoio a sinistra") is None
 
 

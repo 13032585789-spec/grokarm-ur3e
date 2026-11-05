@@ -45,6 +45,46 @@ tool:
   # with a ruler. Used by relative moves / touch / calibration. null = relative.assumed_tip_length_m.
   tip_length_m: null
 
+gripper:
+  # Printed passive semicircle gripper (semicircle_gripper.step + photos 2026-11-05). No actuator.
+  # Plate ⌀63 on the flange; a beam runs PERPENDICULAR to the flange axis; at its end a level half ring
+  # (inner ⌀53, outer ⌀67, 10 mm tall) whose mouth faces along the flange axis.
+  # Use: flange axis horizontal, ring hanging below it, ring low around the cup, slide forward, lift:
+  # the cup's taper wedges in the ring and the cup is carried.
+  # When enabled, EVERY planned path is checked with this body (not the old 15 cm virtual needle) and every
+  # program sets the payload first (a wrong payload = protective stop in free motion).
+  enabled: true
+  type: passive_ring
+  plate_radius_m: 0.0315
+  ring_offset_m: 0.1115       # flange axis -> ring centre, perpendicular to the axis (the beam)
+  ring_axial_m: 0.012         # flange face -> ring centre, along the flange axis (from the photo; check)
+  # Which flange axis the beam points along, in the flange frame. null = learned from the pose at grasp time
+  # (the arm must then be with the flange axis horizontal and the ring hanging straight down).
+  offset_axis_flange: null    # e.g. [0, -1, 0] once known
+  ring_inner_radius_m: 0.0265
+  ring_outer_radius_m: 0.0335
+  ring_height_m: 0.010
+  wrist_radius_m: 0.033       # UR3e wrist covers, checked against cups too
+  self_radius_m: 0.04         # gripper never closer than this to the axis of base/upper arm/forearm/wrist 1-2
+  mass_kg: 0.08               # printed part; WEIGH IT and put the value here
+  cog_m: [0.0, 0.0, 0.03]
+  set_payload: true
+  table_clearance_m: 0.003    # ring never closer than this to the table
+grasp:
+  # Paper cup, MEASURE yours (calliper/ruler). The ring only slides around the cup where the cup is narrower
+  # than ⌀53, so the bottom diameter decides everything.
+  cup_height_m: 0.08
+  cup_bottom_diameter_m: 0.048
+  cup_top_diameter_m: 0.072
+  entry_margin_m: 0.0005      # per side, between ring and cup while sliding in
+  approach_gap_m: 0.015       # ring this far from the cup before the slide
+  above_clear_m: 0.03         # gripper this far above every cup rim while travelling
+  slide_speed: 0.02           # m/s
+  lift_m: 0.08
+  lift_speed: 0.03
+  max_joint_change_rad: 3.2
+  table_z_m: null             # table height in the base frame; null = relative.table_z_m (base on the table)
+
 relative:
   # "3 cm a sinistra", "ruota la base di 30 gradi". The amount is read from the operator's own words.
   max_cm: 10
