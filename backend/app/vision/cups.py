@@ -37,7 +37,7 @@ COLOURS: dict[str, list[tuple[int, int]]] = {
 # Vivid cups only. Skin sits in the same hues as orange/yellow but with low saturation.
 COLOUR_SV: dict[str, tuple[int, int]] = {
     "red": (80, 50), "orange": (150, 80), "yellow": (90, 80),
-    "green": (45, 40), "blue": (45, 40), "purple": (45, 40),
+    "green": (45, 40), "blue": (80, 40), "purple": (45, 40),
 }
 ALL_COLOURS = list(COLOURS) + ["pink", "white", "grey", "black"]
 BGR = {"red": (40, 40, 230), "orange": (0, 140, 255), "yellow": (0, 220, 240), "green": (60, 200, 60),
