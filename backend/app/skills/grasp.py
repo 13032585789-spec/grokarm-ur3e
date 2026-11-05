@@ -154,7 +154,9 @@ def _try_heading(guard, g, gp, q, xy, e, hz, tz, H, zc, others, saved, reasons) 
         q_high, q_pre, q_seat, q_lift = qh, qp, qs, ql
         break
     if q_lift is None:
-        reasons.append("nessuna_postura_sicura:" + (max(set(blame), key=blame.count) if blame else "ik_polso"))
+        real = [b for b in blame if not b.endswith("limite_giunto")] or blame   # joint-limit branches are just unusable IK solutions
+        top = sorted(set(real), key=real.count, reverse=True)[:3]
+        reasons.append("nessuna_postura_sicura:" + (",".join(f"{b}x{real.count(b)}" for b in top) if top else "ik_polso"))
         return None
     box = lambda x, y, name: {"name": name, "min": [x - rtop, y - rtop, tz - 0.01],  # noqa: E731
                               "max": [x + rtop, y + rtop, tz + H]}
