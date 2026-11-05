@@ -35,7 +35,7 @@ from ..skills.registry import Registry, SkillError, ValidatedAction
 from ..skills.world import WorldModel, joints_close
 from ..vision.inspector import FAIL, PASS, UNSURE, clean_rule
 from ..vision.cups import ALL_COLOURS, CupFinder, colour_of
-from ..vision.plane import Plane
+from ..vision.plane import Plane, eye
 from ..vision.marker import MarkerFitError, detect, pairs_for_plane
 from ..vision.table_calib import CalibrationError, TableCalibration
 from ..vision.texts import t as tr
@@ -151,6 +151,19 @@ class Gate:
         self.cups = CupFinder(self.s.zones, dict(self.s.robot.get("cups") or {}),
                               (self.s.inspection or {}).get("labels"))
 
+    def plane(self) -> Plane | None:
+        """The four-tape table calibration (data/plane.json), re-read only when the file changes."""
+        path = self.s.data_dir / "plane.json"
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            self._plane = (None, None)
+            return None
+        cached = getattr(self, "_plane", (None, None))
+        if cached[0] != mtime:
+            self._plane = (mtime, Plane.load(path))
+        return self._plane[1]
+
     def scan_cups(self) -> dict[str, Any]:
         """Read-only: which coloured cups the camera sees, and in which zone."""
         if self.camera is None:
@@ -158,23 +171,20 @@ class Gate:
         frame = self.camera.fresh(float((self.s.robot.get("cups") or {}).get("max_frame_age_s", 2.0)))
         if frame is None:
             return _err("telecamera_non_disponibile", "Nessuna immagine recente dalla telecamera.")
-        res = self.cups.scan(frame)
-        raw = res.get("cups") or []
-        plane = Plane.load(self.s.data_dir / "plane.json")
-        if plane is not None and raw:   # only what stands on the table between the four tapes
-            try:
-                h, w = frame.image.shape[:2]
-                if w >= int(1.8 * h):   # side-by-side stereo frame: the plane is on the left eye
-                    w //= 2
-                if (w, h) == tuple(plane.frame_size):
-                    def on_table(c: dict[str, Any]) -> bool:
-                        x0, y0, bw, bh = c["bbox"]
-                        mm = plane.fit.to_mm(x0 + bw / 2, y0 + bh)
-                        return bool(plane.fit.inside_workspace(mm, -8.0))
-                    raw = [c for c in raw if on_table(c)]
-                    res = {**res, "filtro": "nastri"}
-            except Exception as e:   # never hide the camera because of the filter
-                log_event(log, "plane filter failed", error=str(e))
+        plane = self.plane()
+        found = plane.scan(frame.image) if plane is not None else []
+        if plane is not None and found is not None and tuple(eye(frame.image).shape[1::-1]) == tuple(plane.frame_size):
+            # Four-tape table: only saturated cups between the tapes (the robot's own covers are not cups).
+            from ..vision.cups import Cup, zone_bounds, _zone_of
+            w = float(plane.frame_size[0])
+            bounds = zone_bounds(self.s.zones, self.s.robot.get("cups") or {})
+            cups_ = [Cup(c, px, bb, af, _zone_of(px[0] / w, bounds)) for c, px, bb, af in found]
+            raw = [c.public() for c in cups_]
+            res = {"cups": raw, "detector": "nastri", "frame_id": getattr(frame, "frame_id", None)}
+            self.cups.last = {**res, "at": time.time()}
+        else:
+            res = self.cups.scan(frame)
+            raw = res.get("cups") or []
         layout, cups = self._cup_layout(raw, frame)
         res = {**res, "cups": cups, "layout": layout}
         self.bus.publish("cups", **{k: v for k, v in res.items() if k != "cups"})
@@ -202,7 +212,7 @@ class Gate:
         c = c if c in ALL_COLOURS else colour_of(c)
         if c is None:
             return _err("richiesta_ambigua", "Di che colore è il bicchiere?", param="colore", opzioni_valide=ALL_COLOURS)
-        plane = Plane.load(self.s.data_dir / "plane.json")
+        plane = self.plane()
         if plane is not None:
             return await self._point_on_plane(c, plane, source)
         scan = self.scan_cups()
@@ -648,7 +658,7 @@ class Gate:
         c = c if c in ALL_COLOURS else colour_of(c)
         if c is None:
             return _err("richiesta_ambigua", "Di che colore è il bicchiere?", param="colore", opzioni_valide=ALL_COLOURS)
-        plane = Plane.load(self.s.data_dir / "plane.json")
+        plane = self.plane()
         if plane is not None:   # the four-tape table calibration (same as point_at_cup)
             if self.camera is None:
                 return _err("telecamera_non_disponibile", "Telecamera non disponibile.")
@@ -1639,7 +1649,7 @@ class Gate:
         if frame is None:
             return "没有新的画面，没有动。"
         if "xy_m" in ev:
-            plane = Plane.load(self.s.data_dir / "plane.json")
+            plane = self.plane()
             if plane is None:
                 return ""
             loc = plane.locate(frame.image, str(ev.get("colore") or ""))
@@ -1995,6 +2005,87 @@ class Gate:
         return {"ok": True, "esito": "posa_salvata", "nome": key, "nota": "Salvata, non eseguita. Usare vai_a_posa."}
 
     # ======================================================= voice session ===
+    # ============================================== learnt commands (z2) ===
+    async def save_instruction(self, name: str, passi: list[dict[str, Any]]) -> dict[str, Any]:
+        """Record a named sequence of skills as a learnt command. Persisted to data/user_instructions.yaml.
+        Does not move the robot. The steps are validated at save time (like propose_sequence).
+        """
+        import re
+        import yaml
+
+        b = self._blocked()
+        if b or self.state == GateState.PENDING_CONFIRMATION:
+            return b or _err("occupato", "C'è un'azione in attesa di conferma.")
+        key = re.sub(r"[^a-z0-9_]", "", str(name).strip().lower().replace(" ", "_"))
+        if not re.fullmatch(r"[a-z][a-z0-9_]{1,30}", key or ""):
+            return _err("nome_non_valido", "Nome non valido: usa una o due parole semplici.")
+        if key in (self.reg.skills or {}):
+            return _err("nome_riservato", f"'{key}' è un'abilità configurata: scegli un altro nome.")
+        if not passi or len(passi) > 5:
+            return _err("sequenza_non_valida", "La sequenza deve avere da 1 a 5 passi.")
+
+        # dry-run validate every step against current world (preconditions etc)
+        sim = self.world.copy()
+        validated: list[dict[str, Any]] = []
+        for i, st in enumerate(passi):
+            try:
+                sk = st.get("skill") or st.get("abilità") or ""
+                pr = st.get("parametri") or st.get("params") or {}
+                a = self.reg.validate(sk, pr, sim)
+                sim.apply_effects(a.skill, a.params)
+                validated.append({"skill": a.skill, "params": a.params})
+            except SkillError as e:
+                d = e.to_dict()
+                d["passo"] = i + 1
+                return d
+
+        path = self.s.data_dir / "user_instructions.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
+        data.setdefault("instructions", {})[key] = {
+            "passi": validated,
+            "alias": [key.replace("_", " ")],
+            "fonte": "voce",
+        }
+        path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
+
+        # keep in-memory copy up to date (Settings may be shared)
+        ui = getattr(self.s, "user_instructions", None)
+        if ui is None:
+            self.s.user_instructions = {}
+            ui = self.s.user_instructions
+        ui[key] = data["instructions"][key]
+
+        self.history.add(kind="istruzione_salvata", name=key, passi=validated)
+        self.publish_state()
+        return {
+            "ok": True,
+            "esito": "istruzione_salvata",
+            "nome": key,
+            "nota": "Salvata. Per eseguirla usa execute_instruction o di' il nome (Grok lo espande).",
+        }
+
+    async def execute_instruction(self, name: str, *, source: str = "grok") -> dict[str, Any]:
+        """Look up a previously saved instruction and propose its sequence (one confirmation for the batch)."""
+        import re
+        import yaml
+
+        key = re.sub(r"[^a-z0-9_]", "", str(name).strip().lower().replace(" ", "_"))
+        ui = getattr(self.s, "user_instructions", {}) or {}
+        instr = ui.get(key)
+        if not instr:
+            # fallback to disk in case of reload
+            path = self.s.data_dir / "user_instructions.yaml"
+            if path.exists():
+                data = (yaml.safe_load(path.read_text()) or {}).get("instructions", {})
+                instr = data.get(key)
+                if instr:
+                    ui[key] = instr  # cache
+        if not instr or not instr.get("passi"):
+            return _err("istruzione_sconosciuta", f"Istruzione '{name}' non trovata o vuota. Prima salvala con save_instruction.")
+        passi = instr.get("passi", [])
+        return self.propose_sequence(passi, source=source)
+
     async def on_voice_disconnected(self, reason: str) -> None:
         """Clear pending + invalidate confirmations. Never retried, never restored."""
         pa = self.pending

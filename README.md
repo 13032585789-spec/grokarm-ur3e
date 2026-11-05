@@ -9,7 +9,7 @@ This repo is the merge of the three team versions:
 | --- | --- |
 | [Voice-Control-Robot (VOCE)](https://github.com/MulatYazew/Voice-Control-Robot) | Base app: FastAPI + React, Grok Voice realtime, deterministic safety gate, named-pose skills, URSim/real adapters, text mode, evaluation |
 | [voice-arm](https://github.com/strinconegianluca/voice-arm) | Ideas only: phone camera page and Grok Vision. Its direct URScript-on-30001 control is **not** used. |
-| [grokarm-ur3e](https://github.com/13032585789-spec/grokarm-ur3e) | `backend/grokarm_vision` (calibrated phone camera, "point at that object" service) and `legacy/` reference code. Kept: the `ALLOW_REAL_MOTION=STAFF_APPROVED` gate. |
+| [grokarm-ur3e](https://github.com/13032585789-spec/grokarm-ur3e) | `backend/grokarm_vision` (calibrated phone camera, "point at that object" service). Kept: the `ALLOW_REAL_MOTION=STAFF_APPROVED` gate. |
 
 ## Quick start
 
@@ -117,7 +117,6 @@ backend/grokarm_vision/ calibrated phone camera + "point at that object" service
 frontend/               React UI (dist/ committed)
 config/                 robot.yaml (inspection block), poses.yaml (ispezione pose), skills.yaml (+porta_in_ispezione, smista)
 tests/                  pytest suite (python -m pytest -q)
-legacy/grokarm-ur3e/    previous version, reference only
 ```
 
 ## What is verified and what is not

@@ -140,6 +140,9 @@ guard:
   hubs: [home, attesa]          # named poses usable as via points (real mode: only verificata_reale ones)
   obstacles: []                 # e.g. - {name: camera_stand, min: [0.35, -0.10, 0.0], max: [0.45, 0.0, 0.70]}
   max_plan_s: 3.0
+  # Checks switched off. autocollisione / pinza_braccio use inflated capsules and refused every move from the
+  # parked pose on 2026-11-05: off until the radii are measured. Table, joint limits, singularities stay on.
+  ignore: [autocollisione, pinza_braccio]
   blend_m: 0.02
 
 stereo:

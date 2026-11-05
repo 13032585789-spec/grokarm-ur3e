@@ -48,3 +48,4 @@ REGOLE:
 8. Più azioni in una frase: un solo sì le esegue tutte in ordine, STOP interrompe il resto. Abilità predefinite ("solleva il vassoio e portalo a destra"): propose_sequence. Spostamenti e rotazioni ("底座向左转10度，然后肘关节向上转5度" / "move left 3 cm then up 2 cm"): propose_batch, passi nello stesso ordine della frase, SENZA numeri. Leggi frase_conferma (elenca ogni passo) e aspetta un solo sì. L'ispezione non va mai in una sequenza.
 9. "Ricorda questa posizione come X": usa save_pose(nome) dopo aver chiesto conferma. Salvare non muove il robot.
 {wake}
+- COMANDI IMPARATI: {instructions}. "Ricorda 'nome' come A poi B": save_instruction(nome, passi) dopo la conferma dell'operatore; salva soltanto. Per usarlo: execute_instruction(nome). Un solo sì per tutta la sequenza.

@@ -127,6 +127,18 @@ def tool_schemas(s: Settings, poses: list[str], *, stretch: bool = True) -> list
                             "items": {"type": "object", "properties": {"skill": {"type": "string", "enum": SEQUENCE_SKILL_IDS},
                                                                        "parametri": p}, "required": ["skill"]}}},
                             "required": ["passi"]}},
+            {"type": "function", "name": "save_instruction",
+             "description": "Salva una sequenza di abilità predefinite con un NOME (comando imparato). Non muove il robot. "
+                            "Poi execute_instruction(nome) la propone con un solo sì.",
+             "parameters": {"type": "object", "properties": {
+                 "nome": {"type": "string"},
+                 "passi": {"type": "array", "minItems": 1, "maxItems": 5,
+                           "items": {"type": "object", "properties": {"skill": {"type": "string", "enum": SEQUENCE_SKILL_IDS},
+                                                                      "parametri": p}, "required": ["skill"]}}},
+                 "required": ["nome", "passi"]}},
+            {"type": "function", "name": "execute_instruction",
+             "description": "Proponi un comando salvato con save_instruction. Un solo sì esegue tutta la sequenza.",
+             "parameters": {"type": "object", "properties": {"nome": {"type": "string"}}, "required": ["nome"]}},
             {"type": "function", "name": "save_pose",
              "description": "Salva la posizione attuale del robot con un nome, per vai_a_posa. Non muove il robot.",
              "parameters": {"type": "object", "properties": {"nome": {"type": "string"}}, "required": ["nome"]}},
@@ -148,7 +160,10 @@ def build_prompt(s: Settings, gate: Gate) -> str:
         poses=", ".join(gate.reg.selectable_poses()), zones=", ".join(s.zones), directions=", ".join(s.directions),
         state=state, wake=wake, language=LANGUAGES.get(s.lang, s.lang), trays=trays,
         input_tray=s.zone_label(insp["input_zone"]), pass_tray=s.zone_label(insp["pass_zone"]),
-        fail_tray=s.zone_label(insp["fail_zone"]), pass_zone=insp["pass_zone"], fail_zone=insp["fail_zone"])
+        fail_tray=s.zone_label(insp["fail_zone"]), pass_zone=insp["pass_zone"], fail_zone=insp["fail_zone"],
+        instructions="; ".join(f"{k} = " + ", ".join(st.get("skill", "?") for st in (v or {}).get("passi", []))
+                               for k, v in (getattr(s, "user_instructions", {}) or {}).items())
+        or "nessuno (save_instruction per aggiungerne)")
 
 
 async def dispatch(gate: Gate, name: str, args: dict[str, Any], *, source: str = "grok") -> dict[str, Any]:
@@ -156,7 +171,7 @@ async def dispatch(gate: Gate, name: str, args: dict[str, Any], *, source: str =
     if not isinstance(args, dict):
         return {"ok": False, "esito": "argomenti_non_validi"}
     propose_tools = {"propose_skill", "propose_sequence", "propose_batch", "point_at_cup", "touch_cup",
-                     "move_tip", "rotate_joint"}
+                     "move_tip", "rotate_joint", "grab_cup", "place_cup", "execute_instruction"}
     if (name in propose_tools and str(source).startswith("grok") and gate.utterance is not None
             and gate.voice_fast_utt == gate.utterance.id):
         pa = gate.pending
@@ -182,6 +197,10 @@ async def dispatch(gate: Gate, name: str, args: dict[str, Any], *, source: str =
                     "puo": describe(gate)}
         if name == "propose_batch":
             return await gate.propose_batch(args.get("passi") or [], source=source)
+        if name == "save_instruction":
+            return await gate.save_instruction(str(args.get("nome") or ""), args.get("passi") or [])
+        if name == "execute_instruction":
+            return await gate.execute_instruction(str(args.get("nome") or ""), source=source)
         if name == "propose_sequence":
             steps = [{"skill": p.get("skill"), "params": p.get("parametri") or {}} for p in (args.get("passi") or [])
                      if isinstance(p, dict)]

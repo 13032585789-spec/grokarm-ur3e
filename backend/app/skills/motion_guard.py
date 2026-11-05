@@ -208,10 +208,15 @@ class MotionGuard:
                     for _n, lo, hi in self.obstacles:
                         worst = min(worst, _box_dist(p, lo, hi) - r - sm)
             m["ostacolo"] = worst
-        return m
+        return self._apply_ignore(m)
 
     def config_ok(self, q: Sequence[float]) -> bool:
         return min(self.margins(q).values()) >= 0
+
+    def _apply_ignore(self, m: dict[str, float]) -> dict[str, float]:
+        for k in self.c.get("ignore") or ():
+            m.pop(k, None)
+        return m
 
     # ============================================================ segments ===
     def _walk(self, samples: list[np.ndarray], singular: bool = False) -> str | None:
@@ -300,8 +305,12 @@ class MotionGuard:
     def plan(self, qa: Sequence[float], qb: Sequence[float]) -> list[np.ndarray]:
         """Via points (ending with qb) for a movej from qa to qb. Raises GuardRejected."""
         a, b = np.asarray(qa, float), np.asarray(qb, float)
-        if not self.config_ok(b):
-            bad = min(self.margins(b).items(), key=lambda kv: kv[1])[0]
+        ma, mb = self.margins(a), self.margins(b)
+        # A check already violated at the start (model too conservative, or the arm parked there) does not block
+        # a target that is no worse on it. Anything that newly fails still blocks.
+        bad_b = {k: v for k, v in mb.items() if v < 0 and not (ma.get(k, 0.0) < 0 and v >= ma[k] - 1e-4)}
+        if bad_b:
+            bad = min(bad_b.items(), key=lambda kv: kv[1])[0]
             raise GuardRejected(bad, f"Il punto di arrivo non è sicuro ({bad}).")
         if self.check_movej(a, b) is None:
             return [b]

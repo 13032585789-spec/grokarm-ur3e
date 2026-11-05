@@ -18,6 +18,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from typing import Callable
 
 from grokarm_vision.calibration import Calibration, CalPoint
 
@@ -122,18 +123,29 @@ def order_corners(centers: list[tuple[float, float, float]]) -> dict[str, tuple[
     return {name: (float(by_place[place][0]), float(by_place[place][1])) for name, place in IMAGE_CORNER.items()}
 
 
-def footprint(image: np.ndarray, colour: str) -> tuple[float, float] | None:
-    """Centre of the lower part of the colour mask: the cup base, not the box bottom."""
+Keep = Callable[[float, float], bool]
+
+
+def colour_mask(image: np.ndarray, colour: str) -> np.ndarray | None:
     ranges = COLOURS.get(colour)
-    mask = None
-    if ranges:
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        sat, val = COLOUR_SV.get(colour, (50, 40))
-        mask = np.zeros(hsv.shape[:2], np.uint8)
-        for lo, hi in ranges:
-            mask |= cv2.inRange(hsv, (lo, sat, val), (hi, 255, 255))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-    px = _footprint_on(mask, image) if mask is not None else None
+    if not ranges:
+        return None
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    sat, val = COLOUR_SV.get(colour, (50, 40))
+    mask = np.zeros(hsv.shape[:2], np.uint8)
+    for lo, hi in ranges:
+        mask |= cv2.inRange(hsv, (lo, sat, val), (hi, 255, 255))
+    return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+
+
+def footprint(image: np.ndarray, colour: str, keep: Keep | None = None) -> tuple[float, float] | None:
+    """Centre of the lower part of the colour mask: the cup base, not the box bottom.
+
+    ``keep(x, y)`` says whether a base pixel is a valid place for a cup (on the table, not on a tape). Blobs are
+    filtered BEFORE the largest one is chosen, so a bigger same-colour object off the table no longer hides the cup.
+    """
+    mask = colour_mask(image, colour)
+    px = _footprint_on(mask, image, keep) if mask is not None else None
     if px is not None:
         return px
     from .cups import lab_mask
@@ -141,29 +153,41 @@ def footprint(image: np.ndarray, colour: str) -> tuple[float, float] | None:
     if pale is None:
         return None
     pale = cv2.morphologyEx(pale, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-    return _footprint_on(pale, image)
+    return _footprint_on(pale, image, keep)
 
 
-def _footprint_on(mask: np.ndarray | None, image: np.ndarray) -> tuple[float, float] | None:
-    if mask is None:
-        return None
+def _blobs(mask: np.ndarray, image: np.ndarray, keep: Keep | None):
+    """(area, base_x, base_y, bbox) of every cup-sized blob whose base passes ``keep``, largest first."""
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
     area_img = float(image.shape[0] * image.shape[1])
-    hits = [i for i in range(1, n) if 0.0004 * area_img <= stats[i, cv2.CC_STAT_AREA] <= 0.05 * area_img]
+    out = []
+    for i in range(1, n):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if not 0.0004 * area_img <= area <= 0.05 * area_img:
+            continue
+        x, y, w, h = (int(v) for v in stats[i, :4])
+        ys, xs = np.where(labels[y:y + h, x:x + w] == i)
+        cut = np.percentile(ys, 65)
+        sel = ys >= cut
+        if int(sel.sum()) < 5:
+            continue
+        bx, by = float(xs[sel].mean()) + x, float(ys[sel].mean()) + y
+        if keep is not None and not keep(bx, by):
+            continue
+        out.append((area, bx, by, (x, y, w, h)))
+    out.sort(key=lambda b: b[0], reverse=True)
+    return out
+
+
+def _footprint_on(mask: np.ndarray | None, image: np.ndarray, keep: Keep | None = None) -> tuple[float, float] | None:
+    if mask is None:
+        return None
+    hits = _blobs(mask, image, keep)
     if not hits:
         return None
-    hits.sort(key=lambda i: int(stats[i, cv2.CC_STAT_AREA]), reverse=True)
-    if len(hits) > 1:
-        largest = int(stats[hits[0], cv2.CC_STAT_AREA])
-        second = int(stats[hits[1], cv2.CC_STAT_AREA])
-        if largest < second * 3:
-            return None
-    ys, xs = np.where(labels == hits[0])
-    cut = np.percentile(ys, 65)
-    keep = ys >= cut
-    if int(keep.sum()) < 5:
-        return None
-    return float(xs[keep].mean()), float(ys[keep].mean())
+    if len(hits) > 1 and hits[0][0] < hits[1][0] * 3:
+        return None   # two similar blobs of this colour on the table: ambiguous
+    return hits[0][1], hits[0][2]
 
 
 @dataclass
@@ -211,6 +235,37 @@ class Plane:
         points = [CalPoint(px, (xy[0] * 1000, xy[1] * 1000)) for px, xy in pairs.values()]
         return cls(pairs, size, Calibration.fit(points, size))
 
+    def _keep(self, view: np.ndarray) -> Keep:
+        """Base pixel on the table between the tapes, and not on a tape (an orange tape is not a red cup)."""
+        tapes = order_corners(_orange_centers(view)) or {n: p[0] for n, p in self.pairs.items()}
+        r = 0.03 * float(np.hypot(*self.frame_size))
+
+        def keep(x: float, y: float) -> bool:
+            if any(np.hypot(x - tx, y - ty) < r for tx, ty in tapes.values()):
+                return False
+            return bool(self.fit.inside_workspace(self.fit.to_mm(x, y), -8.0))
+        return keep
+
+    def scan(self, image: np.ndarray) -> list[tuple[str, tuple[float, float], tuple[int, int, int, int], float]]:
+        """Every saturated-colour cup standing on the table: (colour, base px, bbox, area fraction).
+        Pale colours (white / grey / black) are left out here: on this table they are the robot's own covers."""
+        view = eye(image)
+        if tuple(view.shape[1::-1]) != tuple(self.frame_size):
+            return []
+        keep = self._keep(view)
+        area_img = float(view.shape[0] * view.shape[1])
+        found = []
+        for colour in COLOURS:
+            mask = colour_mask(view, colour)
+            if mask is None:
+                continue
+            near = 0.07 * float(np.hypot(*self.frame_size))
+            for area, bx, by, bbox in _blobs(mask, view, keep):   # largest first: a split cup counts once
+                if any(c == colour and np.hypot(bx - p[0], by - p[1]) < near for c, p, _, _ in found):
+                    continue
+                found.append((colour, (bx, by), bbox, area / area_img))
+        return found
+
     def locate(self, image: np.ndarray, colour: str) -> dict:
         view = eye(image)
         h, w = view.shape[:2]
@@ -222,11 +277,10 @@ class Plane:
             diag = float(np.hypot(*self.frame_size))
             if sum(err) / len(err) > 0.08 * diag:
                 return {"ok": False, "esito": "camera_spostata", "messaggio": "胶带在画面里的位置变了，相机可能动过。"}
-        px = footprint(view, colour)
+        px = footprint(view, colour, self._keep(view))
         if px is None:
+            if footprint(view, colour) is not None:
+                return {"ok": False, "esito": "fuori_area", "messaggio": "杯子不在四块胶带围成的桌面上。"}
             return {"ok": False, "esito": "oggetto_non_trovato", "messaggio": f"没有看清{colour}杯子的底部。"}
         x, y = self.fit.to_mm(px[0], px[1])
-        xy = (x / 1000.0, y / 1000.0)
-        if not self.fit.inside_workspace((x, y), -8.0):
-            return {"ok": False, "esito": "fuori_area", "messaggio": "杯子不在四块胶带围成的桌面上。"}
-        return {"ok": True, "xy_m": xy, "px": px, "markers": "saved" if seen is None else "seen"}
+        return {"ok": True, "xy_m": (x / 1000.0, y / 1000.0), "px": px, "markers": "saved" if seen is None else "seen"}

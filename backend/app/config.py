@@ -56,6 +56,7 @@ class Settings:
     warnings: list[str] = field(default_factory=list)
 
     # ------------------------------------------------------------ helpers ---
+    user_instructions: dict[str, Any] = field(default_factory=dict)   # learnt commands, data/user_instructions.yaml
     @property
     def zones(self) -> list[str]:
         return list(self.robot["workspace"]["zones"])
@@ -132,7 +133,7 @@ def load_settings(mode: str | None = None, *, config_dir: Path = CONFIG_DIR, dat
 
     mode = (mode or os.getenv("ROBOT_MODE") or robot.get("default_mode") or "ursim").strip().lower()
     s = Settings(
-        mode=mode, robot=robot, skills=skills, poses=poses,
+        mode=mode, robot=robot, skills=skills, poses=poses, user_instructions=_user_instructions(data_dir),
         xai_api_key=os.getenv("XAI_API_KEY") or None,
         xai_model=os.getenv("XAI_MODEL", "grok-voice-latest"),
         xai_voice=os.getenv("XAI_VOICE", "eve"),
@@ -228,3 +229,12 @@ def validate(s: Settings) -> None:
     for k in ("model", "polyscope_version"):
         if str(s.robot["robot"].get(k, "UNKNOWN")).upper() == "UNKNOWN":
             s.warnings.append(f"robot {k} UNKNOWN (verify on hardware)")
+
+
+def _user_instructions(data_dir: Path) -> dict[str, Any]:
+    """Learnt commands saved by voice (save_instruction). Missing or unreadable file = none."""
+    ui = Path(data_dir) / "user_instructions.yaml"
+    try:
+        return (yaml.safe_load(ui.read_text(encoding="utf-8")) or {}).get("instructions", {}) if ui.exists() else {}
+    except (OSError, yaml.YAMLError):
+        return {}
