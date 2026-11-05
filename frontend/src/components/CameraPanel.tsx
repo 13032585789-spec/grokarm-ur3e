@@ -71,7 +71,22 @@ export function CameraPanel({ camera, source, zoneLabels, canPoint, phoneUrls }:
   const [err, setErr] = useState("");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState<string>(() => localStorage.getItem(`${STORE_KEY}.device`) ?? "");
+  const [res, setRes] = useState("");
   const [tick, setTick] = useState(0);
+
+  const stereoSize = async (track: MediaStreamTrack) => {
+    const wide: MediaTrackConstraints[] = [
+      { width: { ideal: 3200 }, height: { ideal: 1200 } },
+      { width: { ideal: 2560 }, height: { ideal: 720 } },
+      { width: { ideal: 1600 }, height: { ideal: 600 } },
+      { width: { ideal: 1280 }, height: { ideal: 480 } },
+    ];
+    for (const c of wide) {
+      try { await track.applyConstraints(c); } catch { /* this size is not in the driver's list */ }
+      const s = track.getSettings();
+      if ((s.width ?? 0) >= (s.height ?? 1) * 1.8) return;
+    }
+  };
 
   const stop = useCallback(() => {
     if (timer.current) window.clearInterval(timer.current);
@@ -79,6 +94,7 @@ export function CameraPanel({ camera, source, zoneLabels, canPoint, phoneUrls }:
     stream.current?.getTracks().forEach((tr) => tr.stop());
     stream.current = null;
     setOn(false);
+    setRes("");
     localStorage.setItem(STORE_KEY, "off");
   }, []);
 
@@ -86,14 +102,26 @@ export function CameraPanel({ camera, source, zoneLabels, canPoint, phoneUrls }:
     setErr("");
     try {
       stream.current?.getTracks().forEach((tr) => tr.stop());
-      const portrait = window.matchMedia("(max-width: 960px)").matches;
-      const videoConstraints: MediaTrackConstraints = id
-        ? { deviceId: { exact: id }, width: { ideal: portrait ? 720 : 1280 }, height: { ideal: portrait ? 1280 : 720 } }
-        : { facingMode: { ideal: "environment" }, width: { ideal: portrait ? 720 : 1280 }, height: { ideal: portrait ? 1280 : 720 } };
-      if (portrait) videoConstraints.aspectRatio = { ideal: 9 / 16 };
+      let list = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+      if (list.some((d) => !d.label)) {
+        const probe = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        probe.getTracks().forEach((tr) => tr.stop());
+        list = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+      }
+      const elp = list.find((d) => /elp|stereo|usb3dgs|megapixel usb/i.test(d.label));
+      const chosen = list.some((d) => d.deviceId === id) ? id : (elp?.deviceId || list[0]?.deviceId || "");
+      if (chosen && chosen !== id) setDeviceId(chosen);
+      const videoConstraints: MediaTrackConstraints = {
+        deviceId: chosen ? { exact: chosen } : undefined,
+        width: { ideal: 2560 }, height: { ideal: 720 }, aspectRatio: { ideal: 32 / 9 },
+      };
       const s = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+      const track = s.getVideoTracks()[0];
+      if (track) await stereoSize(track);
       stream.current = s;
       if (video.current) { video.current.srcObject = s; await video.current.play().catch(() => undefined); }
+      const st = track?.getSettings();
+      setRes(st?.width && st?.height ? `${st.width}×${st.height}` : "");
       setDevices((await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput"));
       setOn(true);
       localStorage.setItem(STORE_KEY, "on");
@@ -154,7 +182,7 @@ export function CameraPanel({ camera, source, zoneLabels, canPoint, phoneUrls }:
   return (
     <section className="card camera">
       <div className="card-head">
-        <h2>{t("camera")} <span className="sub">{source === "browser" ? t("cam_browser") : t("cam_url")}</span></h2>
+        <h2>{t("camera")} <span className="sub">{source === "browser" ? t("cam_browser") : t("cam_url")}{res ? ` · ${res}` : ""}</span></h2>
         {camera?.frame && <span className={`badge dot ${age !== undefined && age < 2 ? "ok" : "warn"}`}>
           {t("cam_age", { age: (age ?? 0).toFixed(1) })}</span>}
       </div>

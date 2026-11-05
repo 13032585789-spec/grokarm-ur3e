@@ -506,16 +506,28 @@ class Planner:
                 raise SkillError(FUORI_LIMITI, "La traiettoria scenderebbe verso il tavolo.")
             joints.append(q_next)
             q_cur = q_next
+        # The 15 cm tool length is virtual. Lower the real flange to just above a 9 cm cup.
+        rim = float(self.tch.get("object_height_m", 0.09)) + 0.015
+        here, R_here = self._flange_pose(q_cur)
+        descend: list[np.ndarray] = []
+        if float(here[2]) > rim + 0.01:
+            low = np.array(here, dtype=float)
+            low[2] = rim
+            descend = self._flange_segment(q_cur, R_here, here, R_here, low, limit, rim - 0.005)
         m = self._speeds()
         slow = min(m["linear_speed"], 0.05)
+        drop = min(slow, float(self.tch.get("descent_speed", 0.03)))
         r = lambda v: tuple(round(float(x), 6) for x in v)  # noqa: E731
         motion = [MotionStep("movej", None, r(qq), m["joint_speed"], m["joint_accel"]) for qq in level]
         motion += [MotionStep("movel", None, r(qq), slow, m["linear_accel"]) for qq in joints]
+        motion += [MotionStep("movel", None, r(qq), drop, m["linear_accel"]) for qq in descend]
         length = abs(hold - z_floor) + abs(da) * max(r0, r1, 0.05)
         level_deg = math.degrees(float(np.linalg.norm(rotvec(R @ R_start.T))))
         return Plan(motion, timeout_s=length / max(slow, 1e-3) * 3 + 10 + len(level) * 2,
                     info={"xy_mm": [round(float(xy[0]) * 1000, 1), round(float(xy[1]) * 1000, 1)],
-                          "flange_z_mm": round(hold * 1000, 1), "turn_deg": round(math.degrees(da), 1),
+                          "flange_z_mm": round(hold * 1000, 1),
+                          "rim_z_mm": round(rim * 1000, 1),
+                          "turn_deg": round(math.degrees(da), 1),
                           "level_deg": round(level_deg, 1)})
 
     def touch(self, q: Sequence[float], xy: tuple[float, float], cal: Any, height_m: float | None = None) -> Plan:

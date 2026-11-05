@@ -401,7 +401,7 @@ class Gate:
             plan = self.planner.point_above(q, xy)
         except SkillError as e:
             return e.to_dict()
-        phrase = "先把腕部抬高并转到朝下，再水平绕到杯子上方停下，不往下压。可以吗？"
+        phrase = "先绕到杯子上方，再降到杯口上面大约 1 厘米，不压下去。可以吗？"
         return self._propose_computed("indica_bicchiere", {}, plan, q, phrase,
                                       "Polso sopra il bicchiere, senza scendere.", source)
 
