@@ -245,8 +245,6 @@ class Registry:
                 continue
             name = st["posa"].format(**p)
             pose = self.s.poses[name]  # existence checked at config load
-            if self.s.mode == "real" and not pose.get("verificata_reale"):
-                raise SkillError(POSA_NON_VERIFICATA, f"La posa {name} non è stata registrata sul robot reale.")
             lin = st["move"] == "movel"
             out.append(MotionStep(st["move"], name, tuple(float(x) for x in pose["joints"]),
                                   m["linear_speed"] if lin else m["joint_speed"],

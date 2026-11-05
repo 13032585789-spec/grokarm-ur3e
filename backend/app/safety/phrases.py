@@ -28,6 +28,7 @@ STOP_PHRASES = ["arresta il robot", "blocca tutto", "fermati immediatamente", "f
                 "no te muevas", "ne bouge pas", "nicht bewegen", "don t move", "bouge plus",
                 "hold it", "hold on", "look out", "watch out", "get away", "get it away"]
 CJK_STOP = ["停", "别动", "不要动", "住手", "急停", "打住", "站住", "小心", "要撞了", "停止", "非常停止",
+            "哎哎", "卧槽",
             "止まれ", "止まって", "止めて", "止めろ", "ストップ", "やめて", "やめろ", "動くな", "危ない"]
 # Panic words that stop the arm only while it is moving. Before motion they keep their other meaning
 # (cancel, or "not a yes").
@@ -207,3 +208,18 @@ def confirmation_verdict(text: str | None) -> str:
     if toks & AFFIRM_TOKENS or _has_phrase(n, AFFIRM_PHRASES) or _cjk_has(n, CJK_AFFIRM + CJK_AFFIRM_WITH_NEGATION):
         return VALID
     return ABSENT
+
+
+def is_bare_yes(text: str | None) -> bool:
+    """A finished short yes ('sì', 'yes', '是的'), with no other words."""
+    if confirmation_verdict(text) != VALID:
+        return False
+    n = normalize(text)
+    toks = tokens(text)
+    if toks:
+        return set(toks) <= AFFIRM_TOKENS and 1 <= len(toks) <= 3
+    compact = re.sub(r"\s+", "", n)
+    if not compact or len(compact) > 6:
+        return False
+    return any(compact == w or (compact.startswith(w) and len(compact) - len(w) <= 1)
+               for w in (*CJK_AFFIRM, *CJK_AFFIRM_WITH_NEGATION))

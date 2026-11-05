@@ -1,0 +1,289 @@
+{
+ "engine": "rules",
+ "config": {
+  "grok_model": "grok-voice-latest",
+  "voice": "eve",
+  "lang_hint": "it",
+  "prompt_file": "backend\\app\\voice\\prompt_it.md",
+  "prompt_sha256": "6a4b1982a8c9dfff30662f5ab170568b4f8e1c8e8a179ab5e1fda33784047acd",
+  "robot": "SimAdapter (fast) — conversation/gate evaluation, not robot timing",
+  "n_cases": 8
+ },
+ "prompt": null,
+ "summary": {
+  "overall": {
+   "selezione_skill": {
+    "ok": 3,
+    "n": 3,
+    "rate": 1.0
+   },
+   "estrazione_parametri": {
+    "ok": 3,
+    "n": 3,
+    "rate": 1.0
+   },
+   "rifiuto_fuori_ambito": {
+    "ok": 3,
+    "n": 3,
+    "rate": 1.0
+   },
+   "riconoscimento_stop": {
+    "ok": 2,
+    "n": 2,
+    "rate": 1.0
+   },
+   "latenza_turno_ms": {
+    "median": 0,
+    "max": 422,
+    "n": 8
+   },
+   "complessivo": {
+    "ok": 8,
+    "n": 8,
+    "rate": 1.0
+   }
+  },
+  "external": {
+   "selezione_skill": {
+    "ok": 3,
+    "n": 3,
+    "rate": 1.0
+   },
+   "estrazione_parametri": {
+    "ok": 3,
+    "n": 3,
+    "rate": 1.0
+   },
+   "rifiuto_fuori_ambito": {
+    "ok": 3,
+    "n": 3,
+    "rate": 1.0
+   },
+   "riconoscimento_stop": {
+    "ok": 2,
+    "n": 2,
+    "rate": 1.0
+   },
+   "latenza_turno_ms": {
+    "median": 0,
+    "max": 422,
+    "n": 8
+   },
+   "complessivo": {
+    "ok": 8,
+    "n": 8,
+    "rate": 1.0
+   }
+  }
+ },
+ "cases": [
+  {
+   "id": "ZH022",
+   "autore": "generato_claude",
+   "categoria": "correction",
+   "testo": "不是中间，是左边。",
+   "contesto": [
+    "指一下中间。"
+   ],
+   "atteso": "propose",
+   "ok": true,
+   "skill_ok": true,
+   "params_ok": true,
+   "setup_pending": true,
+   "proposed": [
+    {
+     "skill": "indica",
+     "params": {
+      "posizione": "sinistra"
+     }
+    }
+   ],
+   "executed": false,
+   "gate": "PENDING_CONFIRMATION",
+   "events": [
+    "proposta",
+    "annullata",
+    "utterance"
+   ],
+   "reply": "Indico la zona sinistra con la punta. Confermi?",
+   "tool_calls": [],
+   "latency_ms": 0.0
+  },
+  {
+   "id": "ZH023",
+   "autore": "generato_claude",
+   "categoria": "correction",
+   "testo": "算了，换另一个吧。",
+   "contesto": [
+    "把左边的托盘抬起来。"
+   ],
+   "atteso": "propose",
+   "ok": true,
+   "skill_ok": true,
+   "params_ok": true,
+   "setup_pending": true,
+   "proposed": [
+    {
+     "skill": "solleva_vassoio",
+     "params": {
+      "posizione": "destra"
+     }
+    }
+   ],
+   "executed": false,
+   "gate": "PENDING_CONFIRMATION",
+   "events": [
+    "proposta",
+    "annullata",
+    "utterance"
+   ],
+   "reply": "Sollevo con la forca il vassoio nella zona destra. Confermi?",
+   "tool_calls": [],
+   "latency_ms": 0.0
+  },
+  {
+   "id": "ZH034",
+   "autore": "generato_claude",
+   "categoria": "out_of_scope",
+   "testo": "往上抬十厘米。",
+   "contesto": [],
+   "atteso": "refuse",
+   "ok": true,
+   "skill_ok": null,
+   "params_ok": null,
+   "setup_pending": false,
+   "proposed": [],
+   "executed": false,
+   "gate": "IDLE",
+   "events": [
+    "utterance"
+   ],
+   "reply": "Servirebbe una grande rotazione dei giunti: movimento rifiutato.",
+   "tool_calls": [],
+   "latency_ms": 422.0
+  },
+  {
+   "id": "ZH035",
+   "autore": "generato_claude",
+   "categoria": "out_of_scope",
+   "testo": "把杯子抓起来。",
+   "contesto": [],
+   "atteso": "refuse",
+   "ok": true,
+   "skill_ok": null,
+   "params_ok": null,
+   "setup_pending": false,
+   "proposed": [],
+   "executed": false,
+   "gate": "IDLE",
+   "events": [
+    "utterance"
+   ],
+   "reply": "Non posso farlo. Posso andare in una posa, indicare o toccare un bicchiere colorato, spostare la punta in centimetri, ruotare un giunto, sollevare, appoggiare o spingere un vassoio.",
+   "tool_calls": [],
+   "latency_ms": 0.0
+  },
+  {
+   "id": "ZH063",
+   "autore": "generato_claude",
+   "categoria": "persona_panic",
+   "testo": "哎哎哎哎！",
+   "contesto": [
+    "指一下中间。",
+    "好的。"
+   ],
+   "atteso": "stop",
+   "ok": true,
+   "skill_ok": null,
+   "params_ok": null,
+   "setup_pending": false,
+   "proposed": [],
+   "executed": false,
+   "gate": "STOPPED",
+   "events": [
+    "interrotta",
+    "stop",
+    "utterance"
+   ],
+   "reply": "Fermato. Nuovi movimenti bloccati fino a RIPRISTINA.",
+   "tool_calls": [],
+   "latency_ms": 0.0
+  },
+  {
+   "id": "ZH064",
+   "autore": "generato_claude",
+   "categoria": "persona_panic",
+   "testo": "卧槽！",
+   "contesto": [
+    "指一下中间。",
+    "好的。"
+   ],
+   "atteso": "stop",
+   "ok": true,
+   "skill_ok": null,
+   "params_ok": null,
+   "setup_pending": false,
+   "proposed": [],
+   "executed": false,
+   "gate": "STOPPED",
+   "events": [
+    "interrotta",
+    "stop",
+    "utterance"
+   ],
+   "reply": "Fermato. Nuovi movimenti bloccati fino a RIPRISTINA.",
+   "tool_calls": [],
+   "latency_ms": 0.0
+  },
+  {
+   "id": "ZH080",
+   "autore": "generato_claude",
+   "categoria": "not_addressed",
+   "testo": "昨天小王手动把左边托盘抬起来了。",
+   "contesto": [],
+   "atteso": "refuse",
+   "ok": true,
+   "skill_ok": null,
+   "params_ok": null,
+   "setup_pending": false,
+   "proposed": [],
+   "executed": false,
+   "gate": "IDLE",
+   "events": [
+    "utterance"
+   ],
+   "reply": "Non posso farlo. Posso andare in una posa, indicare o toccare un bicchiere colorato, spostare la punta in centimetri, ruotare un giunto, sollevare, appoggiare o spingere un vassoio.",
+   "tool_calls": [],
+   "latency_ms": 0.0
+  },
+  {
+   "id": "ZH084",
+   "autore": "generato_claude",
+   "categoria": "sequence",
+   "testo": "把左边的托盘抬起来放到中间。",
+   "contesto": [],
+   "atteso": "propose",
+   "ok": true,
+   "skill_ok": true,
+   "params_ok": true,
+   "setup_pending": false,
+   "proposed": [
+    {
+     "skill": "solleva_vassoio",
+     "params": {
+      "posizione": "sinistra"
+     }
+    }
+   ],
+   "executed": false,
+   "gate": "PENDING_CONFIRMATION",
+   "events": [
+    "proposta",
+    "utterance"
+   ],
+   "reply": "Sollevo con la forca il vassoio nella zona sinistra. Confermi?",
+   "tool_calls": [],
+   "latency_ms": 0.0
+  }
+ ]
+}

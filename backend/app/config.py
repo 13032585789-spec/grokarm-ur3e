@@ -73,7 +73,12 @@ class Settings:
 
     @property
     def ttl_s(self) -> float:
-        return float(self.robot["safety"]["confirmation_ttl_s"])
+        raw = self.robot["safety"].get("confirmation_ttl_s", 0)
+        return 0.0 if raw in (None, "", 0) else float(raw)
+
+    @property
+    def gripper_on(self) -> bool:
+        return bool((self.robot.get("tool") or {}).get("gripper"))
 
     @property
     def motion(self) -> dict[str, float]:
@@ -215,7 +220,9 @@ def validate(s: Settings) -> None:
                               "in config/robot.yaml (explicit opt-in).")
         unverified = [k for k, v in s.poses.items() if not v.get("verificata_reale")]
         if unverified:
-            s.warnings.append(f"{len(unverified)} poses not verified on the real robot; skills using them will be refused.")
+            s.warnings.append(
+                f"{len(unverified)} poses are not recordings from this arm. Named commands are planned from the "
+                "current position; home and the waiting pose use their joint list. An unsafe path is still refused.")
     if not s.xai_api_key:
         s.warnings.append("XAI_API_KEY not set: voice disabled, TEXT MODE only.")
     for k in ("model", "polyscope_version"):

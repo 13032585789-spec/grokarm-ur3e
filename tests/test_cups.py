@@ -28,6 +28,15 @@ def jpeg(img):
     return cv2.imencode(".jpg", img)[1].tobytes()
 
 
+def test_shallow_pale_cup_on_a_white_table():
+    img = np.full((540, 960, 3), (240, 240, 240), np.uint8)
+    cv2.ellipse(img, (200, 340), (46, 22), 0, 0, 360, (236, 236, 242), -1)
+    cv2.rectangle(img, (154, 340), (246, 400), (236, 236, 242), -1)
+    cv2.ellipse(img, (200, 338), (46, 22), 0, 0, 360, (214, 214, 220), 3)
+    cups = find_cups(img, ZONES, {})
+    assert [(c.colour, c.zone) for c in cups] == [("white", "sinistra")]
+
+
 def test_find_cups_zones_and_colours():
     cups = find_cups(table(("red", 150), ("blue", 480), ("yellow", 800)), ZONES, {})
     assert [(c.colour, c.zone) for c in cups] == [("red", "sinistra"), ("blue", "centro"), ("yellow", "destra")]

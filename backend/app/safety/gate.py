@@ -28,13 +28,14 @@ from ..config import Settings
 from ..monitoring.events import EventBus, History, Metrics, log_event
 from ..robot.base import COMPLETED, FAILED, NOT_STARTED, STOPPED, UNKNOWN, ExecutionResult, RobotAdapter, RobotStatus
 from ..robot.base import result as _exec_result
-from ..skills.amounts import amounts_in_order, angle_deg, distance_cm, is_repeat, length_cm
+from ..skills.amounts import amounts_in_order, angle_deg, distance_cm, is_nudge, is_repeat, length_cm
 from ..skills.cartesian import DIRECTIONS, JOINTS, Planner, canon_direction, canon_joint, canon_side
 from ..skills.motion_guard import GuardRejected, guard_from_settings, hover_and_lower
 from ..skills.registry import Registry, SkillError, ValidatedAction
 from ..skills.world import WorldModel, joints_close
 from ..vision.inspector import FAIL, PASS, UNSURE, clean_rule
 from ..vision.cups import ALL_COLOURS, CupFinder, colour_of
+from ..vision.plane import Plane
 from ..vision.marker import MarkerFitError, detect, pairs_for_plane
 from ..vision.table_calib import CalibrationError, TableCalibration
 from ..vision.texts import t as tr
@@ -77,7 +78,9 @@ class PendingAction:
     remaining: list[dict[str, Any]] = field(default_factory=list)   # raw later steps (re-validated each time)
 
     def public(self, ttl: float, now: float) -> dict[str, Any]:
-        return {"id": self.id, **self.action.public(), "expires_in_s": max(0.0, round(ttl - (now - self.created), 1)),
+        # ttl <= 0: the proposal stays until confirm, cancel, or stop. The page shows no countdown.
+        expires = None if ttl <= 0 else max(0.0, round(ttl - (now - self.created), 1))
+        return {"id": self.id, **self.action.public(), "expires_in_s": expires,
                 "ttl_s": ttl, "question_asked": self.question_asked_at is not None, "source": self.source,
                 "plan_id": self.plan_id, "step": self.step_index + 1, "steps": self.step_total}
 
@@ -124,6 +127,8 @@ class Gate:
         self._act_ids = itertools.count(1)
         self._plan_ids = itertools.count(1)
         self.utterance: Utterance | None = None
+        self.voice_fast_utt: int | None = None
+        self._partial_gen = 0
         self._exec_task: asyncio.Task | None = None
         self._cancel: threading.Event | None = None
         self._exec_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="robot-exec")
@@ -181,6 +186,9 @@ class Gate:
         c = c if c in ALL_COLOURS else colour_of(c)
         if c is None:
             return _err("richiesta_ambigua", "Di che colore è il bicchiere?", param="colore", opzioni_valide=ALL_COLOURS)
+        plane = Plane.load(self.s.data_dir / "plane.json")
+        if plane is not None:
+            return await self._point_on_plane(c, plane, source)
         scan = self.scan_cups()
         if not scan.get("ok"):
             return scan
@@ -210,6 +218,7 @@ class Gate:
             lang = self.s.lang
             self.pending.action.conferma = tr("cup_question", lang, colour=word("colour", c, lang),
                                               zone=word("zone", zones[0], lang))
+            self.pending.action.extra["evidenza"] = {"colore": c, "zona": zones[0]}
             res["frase_conferma"] = self.pending.action.conferma
             res["bicchiere"] = {"colore": c, "zona": zones[0], "rilevatore": detector}
             self.publish_state()
@@ -265,7 +274,13 @@ class Gate:
         lang = self.s.lang
         cm = await self._operator_amount("cm")
         if cm is None:
-            return _err("richiesta_ambigua", tr("how_much_cm", lang, max=f"{self.planner.max_cm:g}"), param="quantita")
+            said = await self._operator_text()
+            if is_nudge(said) and d == "su":
+                return await self.propose_rotate("spalla", "su", source=source)
+            if is_nudge(said):
+                cm = 10.0
+            else:
+                return _err("richiesta_ambigua", tr("how_much_cm", lang), param="quantita")
         q = await self._joints_now()
         if isinstance(q, dict):
             return q
@@ -304,6 +319,8 @@ class Gate:
                 return await self.propose_move(sd, source=source)
             return _err("richiesta_ambigua", tr("cm_not_degrees", lang))
         deg = await self._operator_amount("deg")
+        if deg is None and is_nudge(said):
+            deg = 25.0
         if deg is None:
             return _err("richiesta_ambigua", tr("how_much_deg", lang, max=f"{self.planner.max_deg:g}"), param="quantita")
         q = await self._joints_now()
@@ -385,6 +402,96 @@ class Gate:
         plan = type("Batch", (), {"motion": motion, "timeout_s": timeout, "info": {}})()
         return self._propose_computed("sequenza", {"passi": str(len(parsed))}, plan, q0, phrase,
                                       f"Sequenza di {len(parsed)} movimenti completata.", source)
+
+    def _two_zone_plan(self, q: list[float], origin: str, dest: str):
+        first = self.planner.point_above(q, self.planner.zone_xy(origin), descend=False)
+        q2 = first.motion[-1].joints
+        if q2 is None:
+            return first
+        second = self.planner.point_above(q2, self.planner.zone_xy(dest), descend=False)
+        return self.planner._join(first, second)
+
+    async def propose_transfer(self, origin: Any, dest: Any, *, source: str = "grok") -> dict[str, Any]:
+        """Point at one zone, then the other. One command, no gripper."""
+        b = self._blocked()
+        if b:
+            return b
+        o, d = self.reg.normalize("zona", origin), self.reg.normalize("zona", dest)
+        if not o or not d or o == d:
+            return _err("richiesta_ambigua", "从哪边指到哪边？左右要是两个不同的区域。", param="posizione",
+                        opzioni_valide=list(self.s.zones))
+        if self.s.gripper_on:
+            return _err("pinza_non_collegata", "夹爪开关是开的，但这台控制器没有夹爪驱动，所以不会抓。关掉开关就用手腕指。")
+        q = await self._joints_now()
+        if isinstance(q, dict):
+            return q
+        try:
+            plan = self._two_zone_plan(list(q), o, d)
+        except SkillError as e:
+            plan = await self._transfer_guard(list(q), o, d)
+            if plan is None:
+                return e.to_dict()
+        lang = self.s.lang
+        phrase = tr("transfer_question", lang, origin=word("zone", o, lang), dest=word("zone", d, lang))
+        return self._propose_computed("indica_tra", {"origine": o, "destinazione": d}, plan, list(q), phrase,
+                                      "Polso sull'altra zona.", source)
+
+    async def _point_on_plane(self, colour: str, plane: Plane, source: str) -> dict[str, Any]:
+        """Cup footprint on the saved tape plane. Proposes a point. Does not confirm or move."""
+        if self.camera is None:
+            return _err("telecamera_non_disponibile", "Telecamera non disponibile.")
+        frame = self.camera.fresh(float((self.s.robot.get("cups") or {}).get("max_frame_age_s", 2.0)))
+        if frame is None:
+            return _err("telecamera_non_disponibile", "Nessuna immagine recente dalla telecamera.")
+        loc = plane.locate(frame.image, colour)
+        if not loc.get("ok"):
+            return _err(loc.get("esito", "oggetto_non_trovato"), loc.get("messaggio", ""))
+        q = await self._joints_now()
+        if isinstance(q, dict):
+            return q
+        if self.s.gripper_on:
+            return _err("pinza_non_collegata",
+                        "夹爪开关是开的，但这台控制器还没有接上夹爪，所以不会抓。关掉开关就用手腕指。")
+        xy = tuple(loc["xy_m"])
+        try:
+            plan = self.planner.point_above(q, xy)
+        except SkillError as e:
+            plan = await self._hover_any_pose(q, xy)
+            if plan is None:
+                return e.to_dict()
+        phrase = "用手腕指到杯子上方，停在杯口上面大约 1 厘米。"
+        res = self._propose_computed(
+            "indica_bicchiere", {}, plan, q, phrase, "Polso sopra il bicchiere.", source,
+            evidenza={"colore": colour, "xy_m": [round(float(v), 4) for v in xy]})
+        if res.get("ok"):
+            res["bicchiere"] = {"colore": colour, "xy_m": [round(v, 4) for v in loc["xy_m"]],
+                                "rilevatore": "plane", "pinza": False}
+        if source in ("rules", "ui") and res.get("ok"):
+            return await self._run_operator_command(res)
+        return res
+
+    async def _run_operator_command(self, res: dict[str, Any]) -> dict[str, Any]:
+        """The operator's own command authorizes this plan. Stop and a fault still block it."""
+        pa = self.pending
+        if pa is None or pa.id != res.get("action_id"):
+            return res
+        st = await self.refresh_robot()
+        if self.pending is not pa or self.state != GateState.PENDING_CONFIRMATION:
+            return _err("stato_cambiato", "状态变了，没有动。")
+        if not st.ok_for_motion:
+            self.cancel(source="operatore")
+            return _err("robot_non_disponibile",
+                        f"机器人现在不能动：{st.detail or st.safety or st.robot_mode}。")
+        pa.used = True
+        self.pending = None
+        self._cancel = threading.Event()
+        self.world.active_skill = pa.action.skill
+        self.history.add(kind="confermata", action=pa.id, skill=pa.action.skill, params=pa.action.params,
+                         text=pa.source)
+        self._transition(GateState.EXECUTING, f"comando operatore {pa.source}", action=pa.id)
+        self._exec_task = asyncio.ensure_future(self._execute(pa, self._cancel, self.clock()))
+        return {"ok": True, "esito": "esecuzione_avviata", "action_id": pa.id, "skill": pa.action.skill,
+                "bicchiere": res.get("bicchiere"), "messaggio": "按你的命令开始。急停仍然有效。"}
 
     async def point_at_saved_cup(self, *, source: str = "ui") -> dict[str, Any]:
         """Propose the hover written in the temporary calibration. Does not confirm and does not move."""
@@ -913,7 +1020,10 @@ class Gate:
 
     # ========================================================== utterances ===
     def note_turn_committed(self, source: str = "voice") -> Utterance:
-        """The operator finished a turn (VAD commit); its transcript may follow."""
+        """The operator finished a turn. A second commit for the same still-open turn reuses it."""
+        u = self.utterance
+        if u is not None and u.source == source and not u.done.is_set():
+            return u
         u = Utterance(id=next(self._utt_ids), t=self.clock(), source=source)
         self.utterance = u
         return u
@@ -924,27 +1034,94 @@ class Gate:
             return phrases.is_motion_stop(text)
         return phrases.is_stop(text)
 
-    def note_transcript(self, text: str | None, *, final: bool = True, source: str = "voice") -> bool:
-        """Operator transcript. Returns True if it triggered STOP (handled independently of Grok)."""
+    def note_transcript(self, text: str | None, *, final: bool = True, source: str = "voice",
+                        auto_act: bool = False) -> bool:
+        """Operator transcript. Returns True if it triggered STOP.
+
+        auto_act is the voice path: a clear command is proposed from the rules immediately.
+        On the real robot that proposal starts. In simulation it still waits for a later yes.
+        """
         stop = self._is_stop_now(text)
         if final:
             u = self.utterance
-            if u is None or u.text is not None or u.source != source:
+            if u is None or u.source != source or u.done.is_set():
                 u = self.note_turn_committed(source)
             u.text = text or ""
             u.done.set()
             self.bus.publish("transcript", role="user", text=text, final=True, source=source)
             self.history.add(kind="utterance", source=source, text=text)
         if stop:
+            self._partial_gen += 1
             asyncio.ensure_future(self.stop(f"transcript:{source}", detail=text or ""))
-        return stop
+            return True
+        if final and auto_act:
+            self._partial_gen += 1
+            self._bg.append(asyncio.ensure_future(self.act_on_voice(text or "")))
+        return False
 
-    def note_partial(self, text: str | None, *, source: str = "voice") -> bool:
-        """Interim transcript: only used to catch STOP as early as possible."""
+    def note_partial(self, text: str | None, *, source: str = "voice", turn_closed: bool = False,
+                     auto_act: bool = False) -> bool:
+        """Interim transcript: STOP immediately, and a bare yes once this turn has closed."""
         if self._is_stop_now(text) and self.state != GateState.STOPPED:
+            self._partial_gen += 1
             asyncio.ensure_future(self.stop(f"transcript:{source}", detail=f"(parziale) {text}"))
             return True
+        if not auto_act or not turn_closed or self.s.mode == "real":
+            return False
+        self._partial_gen += 1
+        if phrases.is_bare_yes(text):
+            gen = self._partial_gen
+            self._bg.append(asyncio.ensure_future(self._debounced_yes(text or "", source, gen)))
         return False
+
+    def cancel_voice_yes(self) -> None:
+        self._partial_gen += 1
+
+    async def _debounced_yes(self, text: str, source: str, gen: int) -> None:
+        try:
+            await asyncio.sleep(0.12)
+        except asyncio.CancelledError:
+            return
+        if gen != self._partial_gen or not phrases.is_bare_yes(text):
+            return
+        if self.state != GateState.PENDING_CONFIRMATION or self.pending is None:
+            return
+        pa = self.pending
+        if pa.question_asked_at is None:
+            return
+        u = self.utterance
+        if u is None or u.source != source or u.done.is_set() or u.id <= pa.question_after_utt:
+            u = self.note_turn_committed(source)
+        if u.id <= pa.question_after_utt:
+            return
+        if u.text is None:
+            u.text = text
+        await self.confirm(pa.id, source="transcript")
+
+    async def act_on_voice(self, text: str) -> None:
+        """Rules read the sentence as soon as it is transcribed. The real robot then starts."""
+        if self.state in (GateState.STOPPED, GateState.FAULT, GateState.EXECUTING):
+            return
+        from ..conversation.fast_voice import propose_if_complete
+        res = await propose_if_complete(self, text)
+        if res and res.get("ok") and res.get("action_id"):
+            self.voice_fast_utt = self.utterance.id if self.utterance else None
+            if self.s.mode == "real" and res.get("esito") == "in_attesa_di_conferma":
+                await self._run_operator_command(res)
+            elif res.get("esito") == "in_attesa_di_conferma":
+                self.mark_question_asked(res["action_id"])
+            return
+        if self.s.mode == "real" or self.state != GateState.PENDING_CONFIRMATION or self.pending is None:
+            return
+        pa = self.pending
+        u = self.utterance
+        if pa.question_asked_at is None or u is None or u.id <= pa.question_after_utt:
+            return
+        verdict = phrases.confirmation_verdict(text)
+        if verdict == phrases.VALID:
+            await self.confirm(pa.id, source="transcript")
+        elif verdict == phrases.NEGATIVE or phrases.is_cancel(text):
+            self.cancel(source="transcript")
 
     # ============================================================ proposal ===
     def _blocked(self) -> dict[str, Any] | None:
@@ -1012,10 +1189,12 @@ class Gate:
         self._transition(GateState.PENDING_CONFIRMATION, f"proposta {pa.id} {act.skill}",
                          action=pa.id, skill=act.skill, params=act.params, replaced=replaced)
         self.history.add(kind="proposta", action=pa.id, skill=act.skill, params=act.params, source=source)
+        hold = " La proposta non scade." if self.s.ttl_s <= 0 else ""
         return {"ok": True, "esito": "in_attesa_di_conferma", "action_id": pa.id, "skill": act.skill,
-                "parametri": act.params, "frase_conferma": act.conferma, "scade_in_s": self.s.ttl_s,
+                "parametri": act.params, "frase_conferma": act.conferma,
+                "scade_in_s": None if self.s.ttl_s <= 0 else self.s.ttl_s,
                 "istruzione": "Leggi frase_conferma all'operatore e aspetta la sua risposta. Non chiamare confirm finché "
-                              "l'operatore non ha risposto sì in un nuovo turno."}
+                              "l'operatore non ha risposto sì in un nuovo turno." + hold}
 
     def mark_question_asked(self, action_id: str | None = None) -> None:
         pa = self.pending
@@ -1028,6 +1207,8 @@ class Gate:
             self.publish_state()
 
     def _expire_pending(self) -> bool:
+        if self.s.ttl_s <= 0:
+            return False
         pa = self.pending
         if pa and self.clock() - pa.created > self.s.ttl_s:
             self.pending = None
@@ -1213,17 +1394,165 @@ class Gate:
             self._motion_guard = guard_from_settings(self.s)
         return self._motion_guard
 
+    def _named_unverified(self, act: ValidatedAction) -> bool:
+        """True when this skill still points at joints that were never recorded on this arm."""
+        sk = self.reg.skills.get(act.skill)
+        if sk is None or self.s.mode != "real":
+            return False
+        for st in sk.sequenza:
+            if st.get("move") == "wait":
+                continue
+            name = st["posa"].format(**act.params)
+            if not (self.s.poses.get(name) or {}).get("verificata_reale"):
+                return True
+        return False
+
+    async def _plan_named(self, act: ValidatedAction, joints: list[float] | None) -> tuple[list | None, str]:
+        """Replace an unrecorded zone sequence with a plan from the current joints.
+
+        Home and the waiting pose keep their joint list. A planning failure is an error and sends nothing.
+        """
+        if not self._named_unverified(act):
+            return None, ""
+        if not joints:
+            return None, "还不知道手臂现在的位置，所以这条指令没有发出去。"
+        loop = asyncio.get_running_loop()
+        try:
+            plan = await loop.run_in_executor(
+                None, lambda: self.planner.command_plan(list(joints), act.skill, dict(act.params)))
+        except SkillError as e:
+            plan = await self._named_guard_plan(list(joints), act)
+            if plan is None:
+                return None, str(e)
+        if plan is None:
+            return None, ""
+        act.timeout_s = max(float(act.timeout_s), float(plan.timeout_s))
+        act.extra.update(plan.info)
+        return list(plan.motion), ""
+
+    async def _named_guard_plan(self, joints: list[float], act: ValidatedAction):
+        """When the arc cannot leave this pose, search a safe joint route to the same zone."""
+        from ..skills.cartesian import Plan
+        params = act.params
+        zone = params.get("posizione")
+        if act.skill == "vai_a_posa" and str(params.get("posa", "")).endswith("_sopra"):
+            zone = str(params["posa"])[: -len("_sopra")]
+        if zone not in ("sinistra", "centro", "destra"):
+            return None
+        xy = self.planner.zone_xy(zone)
+        place = act.skill in ("appoggia_vassoio", "smista")
+        hover_z, low_z = (0.18, 0.12) if place else (0.18, 0.16)
+        loop = asyncio.get_running_loop()
+        try:
+            motion, info = await loop.run_in_executor(
+                None, lambda: hover_and_lower(
+                    self.motion_guard, joints, xy, hover_flange_z=hover_z, low_flange_z=low_z, speeds=self.s.motion))
+        except GuardRejected:
+            return None
+        if act.skill in ("indica", "vai_a_posa"):
+            motion = [m for m in motion if m.move != "movel"]
+        elif act.skill in ("solleva_vassoio", "porta_in_ispezione", "spingi"):
+            hover_steps = [m for m in motion if m.move != "movel"]
+            q2 = hover_steps[-1].joints if hover_steps else None
+            if q2 is None:
+                return None
+            try:
+                if act.skill == "spingi":
+                    from ..vision.plane import TAUGHT_TAPE_M
+                    ys = [p[1] for p in TAUGHT_TAPE_M.values()]
+                    extra = self.planner.translate(q2, params["direzione"], (max(ys) - min(ys)) / 3.0 * 100.0)
+                else:
+                    extra = self.planner.translate(q2, "su", 15.0)
+            except SkillError:
+                return None
+            motion = hover_steps + list(extra.motion)
+        return Plan(motion, timeout_s=float(info["timeout_s"]) + 12,
+                    info={"xy_mm": [round(xy[0] * 1000, 1), round(xy[1] * 1000, 1)], "percorso": "guard"})
+
+    async def _transfer_guard(self, q: list[float], origin: str, dest: str):
+        """Wrist over one zone, then the other, when the straight arc cannot start."""
+        from ..skills.cartesian import Plan
+        loop = asyncio.get_running_loop()
+        motion: list = []
+        timeout = 0.0
+        cur = list(q)
+        for zone in (origin, dest):
+            xy = self.planner.zone_xy(zone)
+            start = list(cur)
+            try:
+                steps, info = await loop.run_in_executor(
+                    None, lambda xy=xy, start=start: hover_and_lower(
+                        self.motion_guard, start, xy, hover_flange_z=0.18, low_flange_z=0.16,
+                        speeds=self.s.motion))
+            except GuardRejected:
+                return None
+            hover = [m for m in steps if m.move != "movel"]
+            if not hover or hover[-1].joints is None:
+                return None
+            motion.extend(hover)
+            timeout += float(info["timeout_s"])
+            cur = list(hover[-1].joints)
+        return Plan(motion, timeout_s=timeout + 12, info={"percorso": "guard"})
+
+    async def _recheck_evidence(self, act: ValidatedAction, joints: list[float] | None) -> str:
+        """Before a cup move, look again. No evidence means this check does not apply."""
+        ev = dict((act.extra or {}).get("evidenza") or {})
+        if not ev or self.camera is None:
+            return ""
+        frame = self.camera.fresh(float((self.s.robot.get("cups") or {}).get("max_frame_age_s", 2.0)))
+        if frame is None:
+            return "没有新的画面，没有动。"
+        if "xy_m" in ev:
+            plane = Plane.load(self.s.data_dir / "plane.json")
+            if plane is None:
+                return ""
+            loc = plane.locate(frame.image, str(ev.get("colore") or ""))
+            if not loc.get("ok"):
+                return str(loc.get("messaggio") or "没有再看到那个杯子，没有动。")
+            old, new = ev["xy_m"], loc["xy_m"]
+            if float(np.hypot(float(new[0]) - float(old[0]), float(new[1]) - float(old[1]))) <= 0.03:
+                return ""
+            if not joints:
+                return "杯子挪了，没有当前位置，没有动。"
+            try:
+                plan = self.planner.point_above(joints, (float(new[0]), float(new[1])))
+            except SkillError:
+                plan = await self._hover_any_pose(joints, (float(new[0]), float(new[1])))
+                if plan is None:
+                    return "杯子挪了，新位置走不过去，没有动。"
+            act.motion = plan.motion
+            act.extra["evidenza"]["xy_m"] = [round(float(v), 4) for v in new]
+            return ""
+        colour, zone = ev.get("colore"), ev.get("zona")
+        if colour and zone:
+            seen = self.scan_cups()
+            if not seen.get("ok"):
+                return str(seen.get("messaggio") or "没有新的画面，没有动。")
+            if not any(c.get("colore") == colour and c.get("zona") == zone for c in seen.get("cups") or []):
+                return f"没有再看到{colour}在原来的区域，没有动。"
+        return ""
+
     async def _guarded_motion(self, act: ValidatedAction, cancel: threading.Event) -> tuple[list | None, str]:
         """Re-check the confirmed motion from the robot's ACTUAL joints right before sending it.
 
         Blocked direct moves get safe via points (same final target); anything still unsafe is not sent.
         Fails closed: a guard error means no motion. ``guard.enabled: false`` sends the motion unchanged.
         """
-        if not (self.s.robot.get("guard") or {}).get("enabled", True):
+        guard_on = bool((self.s.robot.get("guard") or {}).get("enabled", True))
+        joints: list[float] | None = None
+        if guard_on or self.s.mode == "real":
+            st = await self.refresh_robot()
+            joints = list(st.joints) if st.joints else None
+        why = await self._recheck_evidence(act, joints)
+        if why:
+            return None, why
+        planned, err = await self._plan_named(act, joints)
+        if err:
+            return None, err
+        if planned is not None:
+            act.motion = planned
+        if not guard_on or not joints:
             return list(act.motion), ""
-        st = await self.refresh_robot()
-        if not st.joints:
-            return list(act.motion), ""          # the adapter reports "not connected" itself
         loop = asyncio.get_running_loop()
         try:
             r = await loop.run_in_executor(None, self.motion_guard.secure, list(st.joints), list(act.motion))

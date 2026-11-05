@@ -43,6 +43,28 @@ ALL_COLOURS = list(COLOURS) + ["pink", "white", "grey", "black"]
 BGR = {"red": (40, 40, 230), "orange": (0, 140, 255), "yellow": (0, 220, 240), "green": (60, 200, 60),
        "blue": (230, 120, 30), "purple": (200, 60, 170), "pink": (180, 105, 255), "white": (250, 250, 250),
        "grey": (160, 160, 160), "black": (20, 20, 20)}
+LAB_MAX = 32.0
+_LAB_REF = {name: cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2LAB).astype(np.float32)[0, 0]
+            for name, bgr in BGR.items()}
+
+
+def nearest_lab(median_lab: np.ndarray) -> tuple[str, float]:
+    """Closest swatch in OpenCV Lab. Highlights with L above 245 are ignored by the caller."""
+    best, dist = "grey", 1e9
+    for name, ref in _LAB_REF.items():
+        d = float(np.linalg.norm(np.asarray(median_lab, dtype=np.float32) - ref))
+        if d < dist:
+            best, dist = name, d
+    return best, dist
+
+
+def lab_mask(image: np.ndarray, colour: str, max_de: float = LAB_MAX) -> np.ndarray | None:
+    """Pixels near this colour in Lab, excluding blown-out white."""
+    if colour not in _LAB_REF:
+        return None
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
+    dist = np.linalg.norm(lab - _LAB_REF[colour], axis=2)
+    return ((dist <= max_de) & (lab[:, :, 0] < 245)).astype(np.uint8) * 255
 
 COLOUR_WORDS: dict[str, list[str]] = {
     "red": ["red", "rosso", "rossa", "rossi", "rojo", "roja", "rouge", "rot", "rote", "roten", "红", "紅", "赤"],
@@ -143,7 +165,97 @@ def find_cups(image: np.ndarray, zones: list[str], cfg: dict[str, Any]) -> list[
             fx = cx / w
             zone = next((z for z, a, b in bounds if a <= fx < b), bounds[-1][0])
             cups.append(Cup(colour, (cx, cy), (bx + rx0, by + ry0, bw, bh), area / (w * h), zone))
+    cups.extend(_pale_cups(roi, hsv, skin, masks, rx0, ry0, w, h, min_area, max_area, bounds))
     cups.sort(key=lambda c: c.px[0])
+    return cups
+
+
+def _pale_cups(roi: np.ndarray, hsv: np.ndarray, skin: np.ndarray, masks: list[tuple[str, np.ndarray]],
+               rx0: int, ry0: int, w: int, h: int, min_area: float, max_area: float,
+               bounds: list[tuple[str, float, float]]) -> list[Cup]:
+    """Name unsaturated patches by Lab, so a pale cup is white, grey or its hue instead of invisible."""
+    taken = np.zeros(hsv.shape[:2], np.uint8)
+    for _, mask in masks:
+        taken = cv2.bitwise_or(taken, mask)
+    free = cv2.bitwise_and(cv2.bitwise_not(taken), cv2.bitwise_not(skin))
+    loose = cv2.bitwise_and(free, cv2.inRange(hsv, (0, 12, 35), (179, 49, 250)))
+    found: list[Cup] = []
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    for colour, ranges in COLOURS.items():
+        mask = np.zeros(hsv.shape[:2], np.uint8)
+        for lo, hi in ranges:
+            mask |= cv2.inRange(hsv, (lo, 12, 35), (hi, 49, 250))
+        mask = cv2.bitwise_and(cv2.morphologyEx(cv2.bitwise_and(mask, loose), cv2.MORPH_OPEN, kernel), free)
+        found.extend(_cups_from_mask(mask, roi, colour, True, rx0, ry0, w, h, min_area, max_area, bounds))
+    for colour in ("white", "grey", "pink"):
+        named = lab_mask(roi, colour)
+        if named is None:
+            continue
+        mask = cv2.bitwise_and(cv2.morphologyEx(cv2.bitwise_and(named, free), cv2.MORPH_OPEN, kernel), free)
+        found.extend(_cups_from_mask(mask, roi, colour, False, rx0, ry0, w, h, min_area, max_area, bounds))
+    found.extend(_rim_cups(roi, rx0, ry0, w, h, min_area, max_area, bounds, found))
+    return found
+
+
+def _rim_cups(roi: np.ndarray, rx0: int, ry0: int, w: int, h: int, min_area: float, max_area: float,
+              bounds: list[tuple[str, float, float]], already: list[Cup]) -> list[Cup]:
+    """A pale cup on a pale table has almost no colour. Its rim still has local contrast."""
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    hp = cv2.absdiff(gray, cv2.GaussianBlur(gray, (31, 31), 0))
+    _, th = cv2.threshold(hp, 10, 255, cv2.THRESH_BINARY)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    th = cv2.morphologyEx(th, cv2.MORPH_OPEN, kernel)
+    th[: int(th.shape[0] * 0.2), :] = 0
+    contours, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cups: list[Cup] = []
+    for cnt in contours:
+        area = float(cv2.contourArea(cnt))
+        if not (min_area <= area <= max_area):
+            continue
+        x, y, bw, bh = (int(v) for v in cv2.boundingRect(cnt))
+        if bw < 12 or bh < 12 or bw / max(bh, 1) > 2.2 or bh / max(bw, 1) > 2.2:
+            continue
+        cx, cy = x + bw / 2.0, y + bh / 2.0
+        if any(abs(c.px[0] - (cx + rx0)) < bw and abs(c.px[1] - (cy + ry0)) < bh for c in already + cups):
+            continue
+        patch = roi[y:y + bh, x:x + bw]
+        if patch.size == 0:
+            continue
+        med = np.median(cv2.cvtColor(patch, cv2.COLOR_BGR2LAB).reshape(-1, 3), axis=0)
+        if float(med[0]) > 245 or float(med[0]) < 160:
+            continue
+        sat = float(np.median(cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)[:, :, 1]))
+        if sat > 40:
+            continue
+        name, dist = nearest_lab(med)
+        if dist > 48:
+            continue
+        cups.append(Cup(name, (cx + rx0, cy + ry0), (x + rx0, y + ry0, bw, bh), area / (w * h),
+                        _zone_of((cx + rx0) / w, bounds)))
+    return cups
+
+
+def _cups_from_mask(mask: np.ndarray, roi: np.ndarray, colour: str, check_lab: bool,
+                    rx0: int, ry0: int, w: int, h: int, min_area: float, max_area: float,
+                    bounds: list[tuple[str, float, float]]) -> list[Cup]:
+    cups: list[Cup] = []
+    n, labels, stats, cents = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    for i in range(1, n):
+        bx, by, bw, bh, area = (int(v) for v in stats[i])
+        if not (min_area <= area <= max_area) or bw / max(bh, 1) > 4 or bh / max(bw, 1) > 4:
+            continue
+        if check_lab:
+            patch = roi[by:by + bh, bx:bx + bw]
+            if patch.size == 0:
+                continue
+            med = np.median(cv2.cvtColor(patch, cv2.COLOR_BGR2LAB).reshape(-1, 3), axis=0)
+            name, dist = nearest_lab(med)
+            if name != colour or dist > LAB_MAX:
+                continue
+        cx, cy = float(cents[i][0]) + rx0, float(cents[i][1]) + ry0
+        fx = cx / w
+        zone = next((z for z, a, b in bounds if a <= fx < b), bounds[-1][0])
+        cups.append(Cup(colour, (cx, cy), (bx + rx0, by + ry0, bw, bh), area / (w * h), zone))
     return cups
 
 

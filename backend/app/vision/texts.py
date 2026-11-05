@@ -180,11 +180,20 @@ T["batch_amounts"] = {
     "de": "{n} Angaben nötig, eine pro Schritt (Zentimeter oder Grad), in derselben Reihenfolge.",
     "ja": "{n}ステップそれぞれに数量（センチか度）が必要です。順番を合わせてください。",
 }
+T["transfer_question"] = {
+    "it": "Punto prima la zona {origin}, poi la zona {dest}, col polso. Nessuna pinza. Confermi?",
+    "en": "I will point at {origin}, then at {dest}, with the wrist. No gripper. Proceed?",
+    "zh": "用手腕先指到{origin}，再指到{dest}。没有夹爪，不抓。可以吗？",
+    "es": "Señalo primero {origin} y luego {dest}, con la muñeca. Sin pinza. ¿Confirmas?",
+    "fr": "Je montre d'abord {origin}, puis {dest}, avec le poignet. Pas de pince. Tu confirmes ?",
+    "de": "Ich zeige zuerst auf {origin}, dann auf {dest}, mit dem Handgelenk. Kein Greifer. Bestätigst du?",
+    "ja": "手首で先に{origin}、次に{dest}を指します。グリッパはないので掴みません。よろしいですか？",
+}
 T["how_much_cm"] = {
-    "it": "Di quanti centimetri? (massimo {max})", "en": "How many centimetres? (max {max})",
-    "zh": "移动多少厘米？（最多 {max} 厘米）", "es": "¿Cuántos centímetros? (máximo {max})",
-    "fr": "De combien de centimètres ? (maximum {max})", "de": "Wie viele Zentimeter? (höchstens {max})",
-    "ja": "何センチですか？（最大 {max}）",
+    "it": "Di quanti centimetri?", "en": "How many centimetres?",
+    "zh": "移动多少厘米？", "es": "¿Cuántos centímetros?",
+    "fr": "De combien de centimètres ?", "de": "Wie viele Zentimeter?",
+    "ja": "何センチですか？",
 }
 T["cm_not_degrees"] = {
     "it": "Centimetri e 公分 spostano la punta, non ruotano un giunto. Dimmi la direzione, oppure i gradi.",

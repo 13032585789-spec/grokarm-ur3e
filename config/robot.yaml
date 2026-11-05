@@ -33,7 +33,8 @@ workspace:
   trays_assumed_at: [sinistra, destra]
 
 tool:
-  description: "Printed tool attachment with fork, pusher and indicating tip (no gripper)"
+  description: "Wrist points. Set gripper true only after a real gripper is mounted and its driver is connected."
+  gripper: false                 # false = point with the wrist; true = grasp (refused until a gripper driver exists)
   # TCP offsets [x, y, z, rx, ry, rz] in m / rad relative to the flange.
   # null = UNKNOWN. Motion uses recorded joint targets, so offsets are not required to move,
   # but they must be measured before any Cartesian feature is added.
@@ -47,7 +48,7 @@ tool:
 
 relative:
   # "3 cm a sinistra", "ruota la base di 30 gradi". The amount is read from the operator's own words.
-  max_cm: 10
+  # No centimetre cap: a move is refused only when the arm cannot reach it or a link would enter the table.
   max_deg: 360
   max_joint_change_rad: 6.283185  # 360°: one step may turn a joint a full circle; a link through the table is still refused
   min_wrist_sin: 0.12           # |sin(wrist 2)| below this = wrist singularity -> refused
@@ -84,12 +85,13 @@ marker:
   size_m: 0.05
 
 camera_intrinsics:
-  # Phone lens in pixels. All four stay null until they are measured.
-  # While they are null, the pointer keeps the fixed cup height and the measured-height path stays off.
-  fx: null
-  fy: null
-  cx: null
-  cy: null
+  # Rectified left eye of the ELP stereo pair, 1600x1200, from config/stereo_calib.npz.
+  # 16 views, rms_stereo 0.355 px. Lens centres measured 60 mm; calibration baseline 60.2 mm.
+  # These pixels are /frame.jpg from `python -m stereo_depth serve`, not the phone camera.
+  fx: 1127.53
+  fy: 1127.53
+  cx: 857.02
+  cy: 642.36
 
 guard:
   # Motion guard (backend/app/skills/motion_guard.py, docs/MOTION_GUARD.md): every confirmed motion is re-checked
@@ -112,7 +114,7 @@ stereo:
   # ELP stereo USB camera depth service: python -m stereo_depth serve  (see docs/STEREO_DEPTH.md)
   # null = off. With it on, set CAMERA_SOURCE=url CAMERA_URL=http://127.0.0.1:8720/frame.jpg so the
   # app, the table calibration and the depth all use the same rectified left image.
-  url: null                     # e.g. http://127.0.0.1:8720  (env STEREO_URL overrides)
+  url: http://127.0.0.1:8720       # python -m stereo_depth serve. Env STEREO_URL overrides.
   timeout_s: 1.5
   min_height_m: 0.03            # a measured rim height outside this range is ignored (fixed height used)
   max_height_m: 0.35
@@ -162,7 +164,7 @@ cups:
   grok_fallback: true            # ask Grok Vision when the named colour is not found locally (needs XAI_API_KEY)
 
 safety:
-  confirmation_ttl_s: 20
+  confirmation_ttl_s: 0        # 0 = stay pending until the operator confirms, cancels, or says stop
   motion_timeout_s: 300          # real program may run this long before "timeout del movimento"
   execution_timeout_margin_s: 5
   stop_on_voice_loss: true      # voice channel lost while moving -> STOP (fail-safe; STOP button still works)

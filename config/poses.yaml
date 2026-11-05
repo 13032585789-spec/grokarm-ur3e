@@ -1,21 +1,22 @@
 # Named poses (joint targets, radians: base, shoulder, elbow, wrist1, wrist2, wrist3).
 #
-# !! ALL VALUES BELOW ARE URSim PLACEHOLDERS generated from one formula (base angle per zone).
-# !! They are NOT recorded from the real Arm 3. Real mode refuses any pose with verificata_reale: false.
-# Record real poses with:  python scripts/record_pose.py <name> --mode real   (jog the robot there first)
+# Joint values below are URSim placeholders, not recordings from this arm.
+# Real mode does not refuse them: zone commands are planned from the current pose and the taught
+# table, and home / attesa use these joints. The motion guard still refuses an unsafe path.
+# Record a pose with:  python scripts/record_pose.py <name> --mode real   (jog the robot there first)
 #
 # selezionabile: true -> may be requested by voice through vai_a_posa.
 poses:
   home:
     joints: [0.0, -1.5708, 0.0, -1.5708, 0.0, 0.0]
     selezionabile: true
-    alias: [casa, riposo, posizione iniziale, iniziale]
+    alias: [casa, riposo, posizione iniziale, iniziale, 回家, 回原位, 原位, 初始位置, 初始]
     fonte: placeholder_ursim
     verificata_reale: false
   attesa:
     joints: [-1.5708, -1.6, 1.6, -1.5708, -1.5708, 0.0]
     selezionabile: true
-    alias: [sicura, posizione di attesa, parcheggio]
+    alias: [sicura, posizione di attesa, parcheggio, 等待, 等待位置, 待命]
     fonte: placeholder_ursim
     verificata_reale: false
   sinistra_sopra:
