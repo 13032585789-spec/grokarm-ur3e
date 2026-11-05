@@ -156,6 +156,7 @@ guard:
     enabled: true
     gripper_margin_m: 0.008     # gripper never closer than this to any arm link
     table_margin_m: 0.002       # gripper / forearm / wrists never closer than this to the table (grasp seats the ring 1 mm above it)
+    self_margin_m: 0.010        # arm links never closer than this to each other (elbow, forearm, wrists vs base, shoulder, upper arm); -1 = off
 
 stereo:
   # ELP stereo USB camera depth service: python -m stereo_depth serve  (see docs/STEREO_DEPTH.md)

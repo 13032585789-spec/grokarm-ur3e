@@ -50,6 +50,12 @@ LINKS = {
     "wrist3":   ("wrist3.stl", (0, 0, -0.0921), (math.pi / 2, 0, 0)),
 }
 LINK_FRAME = {"base": 0, "shoulder": 1, "upperarm": 2, "forearm": 3, "wrist1": 4, "wrist2": 5, "wrist3": 6}
+# Arm link pairs that can really touch each other (not neighbours: those always meet at their joint). Checked with
+# the official collision meshes; at the home pose every pair here is at least 22 mm apart.
+SELF_PAIRS = (("base", "upperarm"), ("base", "forearm"), ("base", "wrist1"), ("base", "wrist2"), ("base", "wrist3"),
+              ("shoulder", "forearm"), ("shoulder", "wrist1"), ("shoulder", "wrist2"), ("shoulder", "wrist3"),
+              ("upperarm", "wrist1"), ("upperarm", "wrist2"), ("upperarm", "wrist3"),
+              ("forearm", "wrist2"), ("forearm", "wrist3"), ("wrist1", "wrist3"))
 # Links the gripper can touch. wrist3 carries it (always "touching"), so it is not checked.
 GRIP_VS = ("base", "shoulder", "upperarm", "forearm", "wrist1", "wrist2")
 
@@ -196,9 +202,10 @@ def _link_mesh(name: str) -> tuple[np.ndarray, np.ndarray]:
 
 class MeshModel:
     def __init__(self, gripper: dict[str, Any] | None, *, table_z: float = 0.0, margin_m: float = 0.008,
-                 table_margin_m: float = 0.003) -> None:
+                 table_margin_m: float = 0.003, self_margin_m: float = 0.010) -> None:
         import fcl
         self.fcl = fcl
+        self.self_margin = float(self_margin_m)
         self.table_z = float(table_z)
         self.margin = float(margin_m)
         self.table_margin = float(table_margin_m)
@@ -278,12 +285,20 @@ class MeshModel:
             Tg = P["gripper"]
             low = float(np.min(self.grip_v @ Tg[2, :3] + Tg[2, 3]))
             m["pinza_tavolo_mesh"] = low - (self.table_z + self.table_margin)
+        if self.self_margin >= 0:   # the arm against itself: elbow, forearm and wrists vs base, shoulder, upper arm
+            m["autocollisione_mesh"] = min(self.distance(a, P[a], b, P[b], far_m=self.self_margin + 0.03)
+                                           for a, b in SELF_PAIRS) - self.self_margin
         lows = []
         for link in ("forearm", "wrist1", "wrist2", "wrist3"):
             T = P[link]
             lows.append(float(np.min(self.link_v[link] @ T[2, :3] + T[2, 3])))
         m["braccio_tavolo_mesh"] = min(lows) - (self.table_z + self.table_margin)
         return m
+
+    def self_distances(self, q: Sequence[float]) -> list[float]:
+        """Distance (metres) of every arm link pair that can touch, from the meshes."""
+        P = self.poses(q)
+        return [self.distance(a, P[a], b, P[b], far_m=0.08) for a, b in SELF_PAIRS]
 
     def worst(self, q: Sequence[float]) -> tuple[str, float]:
         return min(self.margins(q).items(), key=lambda kv: kv[1])
@@ -312,7 +327,8 @@ def model_from_settings(settings: Any, table_z: float | None = None) -> MeshMode
         return None
     tz = float((r.get("relative") or {}).get("table_z_m", 0.0)) if table_z is None else float(table_z)
     return MeshModel(r.get("gripper"), table_z=tz, margin_m=float(mc.get("gripper_margin_m", 0.008)),
-                     table_margin_m=float(mc.get("table_margin_m", 0.003)))
+                     table_margin_m=float(mc.get("table_margin_m", 0.003)),
+                     self_margin_m=float(mc.get("self_margin_m", 0.010)))
 
 
 def export_scene(model: MeshModel) -> dict[str, Any]:

@@ -250,6 +250,30 @@ class MotionGuard:
             prev = cur
         return None
 
+    def clearance(self, q: Sequence[float]) -> float:
+        """Smallest distance margin (metres) of one configuration: table, arm against itself, gripper, obstacles.
+        The joint-limit margin is in radians and is left out."""
+        return min(v for k, v in self.margins(q).items() if k != "limite_giunto")
+
+    def tightness(self, q: Sequence[float], comfort_m: float = 0.04) -> float:
+        """How cramped one configuration is: the sum, over every arm link pair and every other distance check, of
+        how far it is inside ``comfort_m`` (0 = everything at least that far apart). Unlike the plain minimum it
+        tells candidates apart even when one fixed pair (base / upper arm) always sets the same smallest gap."""
+        t = 0.0
+        if self.mesh is not None and self.mesh.self_margin >= 0:
+            t += sum(max(0.0, comfort_m - d) for d in self.mesh.self_distances(q))
+        for k, v in self.margins(q).items():
+            if k not in ("limite_giunto", "autocollisione_mesh"):
+                t += max(0.0, comfort_m / 2 - v)
+        return t
+
+    def path_tightness(self, qa: Sequence[float], qb: Sequence[float], step_rad: float = 0.1) -> float:
+        """Mean tightness along a joint-space move (coarse steps). Lower = roomier. Used to PICK the roomiest of
+        several safe candidates (elbow, forearm and wrists kept apart), not to accept or refuse one."""
+        a, b = np.asarray(qa, float), np.asarray(qb, float)
+        n = max(2, int(math.ceil(float(np.max(np.abs(b - a))) / step_rad)) + 1)
+        return float(sum(self.tightness(a + (b - a) * i / (n - 1)) for i in range(n)) / n)
+
     def check_movej(self, qa: Sequence[float], qb: Sequence[float]) -> str | None:
         a, b = np.asarray(qa, float), np.asarray(qb, float)
         n = max(2, int(math.ceil(float(np.max(np.abs(b - a))) / float(self.c["movej_step_rad"]))) + 1)

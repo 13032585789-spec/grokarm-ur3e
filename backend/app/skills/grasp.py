@@ -134,6 +134,7 @@ def plan_grasp(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[
     base_yaw = math.atan2(float(xy[1]), float(xy[0]))
     reasons: list[str] = []
     saved = list(guard.obstacles)
+    found: list[tuple[float, Plan]] = []
     try:
         for dyaw in (0, 15, -15, 30, -30, 45, -45, 60, -60, 75, -75, 90, -90):
             yaw = base_yaw + math.radians(dyaw)
@@ -146,9 +147,16 @@ def plan_grasp(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[
                     got.timeout_s += 15
                     got.motion.insert(0, MotionStep("movel", None, tuple(round(float(x), 6) for x in pre), 0.03, 0.2))
                     got.info["prima_su"] = True
-                return got
+                tight = sum(guard.tightness(np.asarray(v, float)) for v in got.place.values())   # type: ignore[attr-defined]
+                got.info["margine_mm"] = round(min(guard.clearance(np.asarray(v, float)) for v in got.place.values()) * 1000, 1)  # type: ignore[attr-defined]
+                got.info["stretto_mm"] = round(tight * 1000, 1)
+                found.append((tight, got))
+                if tight < 0.005 or len(found) >= 3:   # roomy enough, or three safe headings seen: take the best
+                    break
     finally:
         guard.obstacles = saved
+    if found:
+        return min(found, key=lambda t: t[0])[1]
     why = max(set(reasons), key=reasons.count) if reasons else "ik"
     raise SkillError(FUORI_LIMITI, f"Nessun percorso sicuro per prendere il bicchiere ({why}).")
 
@@ -193,7 +201,8 @@ def _try_heading(guard, g, gp, q, xy, e, hz, tz, H, zc, others, saved, reasons) 
     q_high = q_pre = q_seat = q_lift = None
     blame: list[str] = []
     worst = lambda x: min(guard.margins(x).items(), key=lambda kv: kv[1])[0]  # noqa: E731
-    for qh in branches:   # keep the branch that is also safe down at the cup (wrist above, arm above the table)
+    best = None
+    for qh in branches:   # every branch that is safe up high AND down at the cup; keep the one with the most room
         if not guard.config_ok(qh):
             blame.append(f"alto:{worst(qh)}")
             continue
@@ -207,8 +216,11 @@ def _try_heading(guard, g, gp, q, xy, e, hz, tz, H, zc, others, saved, reasons) 
         if bad:
             blame.append(f"{bad[0][0]}:{worst(bad[0][1])}")
             continue
-        q_high, q_pre, q_seat, q_lift = qh, qp, qs, ql
-        break
+        room = -sum(guard.tightness(x) for x in (qh, qp, qs, ql))
+        if best is None or room > best[0] + 1e-6:
+            best = (room, qh, qp, qs, ql)
+    if best is not None:
+        _room, q_high, q_pre, q_seat, q_lift = best
     if q_lift is None:
         real = [b for b in blame if not b.endswith("limite_giunto")] or blame   # joint-limit branches are just unusable IK solutions
         top = sorted(set(real), key=real.count, reverse=True)[:3]
@@ -292,6 +304,10 @@ def plan_hover(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[
     base_yaw = math.atan2(float(xy[1]), float(xy[0]))
     reasons: list[str] = []
     m = guard_speeds_of(guard)
+    # Every heading of the ring and every IK branch: keep those whose end pose is safe, then take the one whose
+    # whole joint path keeps the most room (elbow / forearm / wrists from the arm and the table), not just the
+    # one that turns the joints least.
+    cands: list[tuple[float, np.ndarray]] = []
     for dyaw in (0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120, 180):
         yaw = base_yaw + math.radians(dyaw)
         hz = np.array([math.cos(yaw), math.sin(yaw), 0.0])
@@ -299,23 +315,28 @@ def plan_hover(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[
         M = np.eye(4)
         M[:3, :3] = R
         M[:3, 3] = ring - hz * axial - down * off + R @ guard.kin.tcp
-        for qh in sorted((np.asarray(b, float) for b in ik_all(guard.kin, M, q)),
-                         key=lambda b: float(np.max(np.abs(b - q)))):
-            if not guard.config_ok(qh):
+        for qh in ik_all(guard.kin, M, q):
+            qh = np.asarray(qh, float)
+            if guard.config_ok(qh):
+                cands.append((float(np.max(np.abs(qh - q))), qh))
+            else:
                 reasons.append("postura")
+    cands.sort(key=lambda c: c[0])
+    scored = sorted(((guard.path_tightness(q, qh), d, qh) for d, qh in cands[:6]), key=lambda t: (round(t[0], 4), t[1]))
+    for tight, _d, qh in scored:
+        vias: list[np.ndarray] = []
+        if guard.check_movej(q, qh) is not None:
+            try:
+                vias = [np.asarray(v, float) for v in guard.plan(q, qh)][:-1]
+            except GuardRejected as err:
+                reasons.append(err.code)
                 continue
-            vias: list[np.ndarray] = []
-            if guard.check_movej(q, qh) is not None:
-                try:
-                    vias = [np.asarray(v, float) for v in guard.plan(q, qh)][:-1]
-                except GuardRejected as err:
-                    reasons.append(err.code)
-                    continue
-            rnd = lambda v: tuple(round(float(x), 6) for x in v)  # noqa: E731
-            motion = [MotionStep("movej", None, rnd(v), m["joint_speed"], m["joint_accel"]) for v in vias + [qh]]
-            travel = float(np.max(np.abs(qh - q))) / max(m["joint_speed"], 1e-3)
-            return Plan(motion, timeout_s=travel * 3 + 20,
-                        info={"xy_mm": [round(float(xy[0]) * 1000, 1), round(float(xy[1]) * 1000, 1)],
-                              "anello_mm": round((ring[2] - guard.table_z) * 1000, 1), "percorso": "pinza"})
+        rnd = lambda v: tuple(round(float(x), 6) for x in v)  # noqa: E731
+        motion = [MotionStep("movej", None, rnd(v), m["joint_speed"], m["joint_accel"]) for v in vias + [qh]]
+        travel = float(np.max(np.abs(qh - q))) / max(m["joint_speed"], 1e-3)
+        return Plan(motion, timeout_s=travel * 3 + 20,
+                    info={"xy_mm": [round(float(xy[0]) * 1000, 1), round(float(xy[1]) * 1000, 1)],
+                          "anello_mm": round((ring[2] - guard.table_z) * 1000, 1), "percorso": "pinza",
+                          "margine_mm": round(guard.clearance(qh) * 1000, 1), "stretto_mm": round(tight * 1000, 1)})
     why = max(set(reasons), key=reasons.count) if reasons else "ik"
     raise SkillError(FUORI_LIMITI, f"Nessun percorso sicuro sopra il bicchiere ({why}).")

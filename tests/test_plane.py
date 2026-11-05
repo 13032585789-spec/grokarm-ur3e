@@ -43,6 +43,8 @@ async def test_operator_command_points_without_a_second_yes(gate):
     img = _scene()
     Plane.build(img).save(gate.s.data_dir / "plane.json")
     gate.s.robot.setdefault("tool", {})["gripper"] = False
+    # Planning with the arm-against-itself mesh check takes a couple of seconds here: one pushed frame must not go stale.
+    gate.s.robot.setdefault("cups", {})["max_frame_age_s"] = 60
     gate.attach_vision(CameraHub(gate.s), MockInspector())
     gate.camera.push(cv2.imencode(".jpg", img)[1].tobytes())
     res = await gate.point_at_cup("blue", source="rules")
