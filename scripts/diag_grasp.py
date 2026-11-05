@@ -44,17 +44,28 @@ def main() -> None:
         raise SystemExit(f"找不到{colour}杯: {loc.get('messaggio')}")
     xy = tuple(loc["xy_m"])
     print(f"{colour}杯位置: x={xy[0] * 1000:.0f} mm  y={xy[1] * 1000:.0f} mm")
-    for label, mesh_on in (("网格碰撞模型 开 (默认)", True), ("网格碰撞模型 关 (只用胶囊)", False)):
+    for label, mesh_on in (("网格 关", False), ("网格 开", True), ("网格 关(再来一次)", False), ("网格 开(再来一次)", True)):
         g = guard_from_settings(s)
-        print(f"\n[{label}] mesh={'有' if g.mesh is not None else '没有'}")
         if not mesh_on:
             g.mesh = None
+        log: list[str] = []
+        orig = g.config_ok
+
+        def spy(qq, _o=orig, _g=g, _l=log):
+            ok = _o(qq)
+            k, v = min(_g.margins(qq).items(), key=lambda kv: kv[1])
+            _l.append(f"{'ok ' if ok else 'NO '} {k}={v * 1000:.1f}mm")
+            return ok
+        g.config_ok = spy
+        print(f"\n[{label}]")
         try:
             p = plan_grasp(g, s, q, xy)
-            print("  ✅ 能规划:", p.info)
+            print("  ✅ 能规划")
         except Exception as e:  # noqa: BLE001
             print("  ❌", getattr(e, "message", None) or e)
-
+        from collections import Counter
+        for k, n in Counter(log).most_common(8):
+            print(f"     {n:3d} x {k}")
 
 if __name__ == "__main__":
     main()
