@@ -200,9 +200,13 @@ class Dashboard:
 
 
 # -------------------------------------------------------------- adapter ---
-def urscript(motion: Sequence[MotionStep], name: str = "voce_skill") -> str:
-    """Fixed program from validated steps only. Numbers are formatted from floats — no text from the conversation."""
+def urscript(motion: Sequence[MotionStep], name: str = "voce_skill", gripper: dict | None = None) -> str:
+    """Fixed program from validated steps only. Numbers are formatted from floats — no text from the conversation.
+    With a gripper configured, its mass is set first: a wrong payload makes the controller see a collision."""
     lines = [f"def {name}():"]
+    if gripper and gripper.get("enabled") and gripper.get("mass_kg") is not None:
+        cog = ", ".join(f"{float(c):.5f}" for c in (gripper.get("cog_m") or [0, 0, 0.03]))
+        lines.append(f"  set_payload({float(gripper['mass_kg']):.5f}, [{cog}])")
     for m in motion:
         if m.move == "wait":
             lines.append(f"  sleep({float(m.seconds):.3f})")
@@ -362,7 +366,7 @@ class URAdapter:
         if cancel.is_set():
             return result(skill, params, t0, STOPPED, state(), error="fermato prima del movimento", total=total)
         try:
-            self._send_script(urscript(motion, f"voce_{skill}"))
+            self._send_script(urscript(motion, f"voce_{skill}", self.s.robot.get("gripper")))
         except OSError as e:
             return result(skill, params, t0, NOT_STARTED, state(), error=f"invio programma fallito: {e}", total=total)
 
