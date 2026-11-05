@@ -91,6 +91,15 @@ camera_intrinsics:
   cx: null
   cy: null
 
+stereo:
+  # ELP stereo USB camera depth service: python -m stereo_depth serve  (see docs/STEREO_DEPTH.md)
+  # null = off. With it on, set CAMERA_SOURCE=url CAMERA_URL=http://127.0.0.1:8720/frame.jpg so the
+  # app, the table calibration and the depth all use the same rectified left image.
+  url: null                     # e.g. http://127.0.0.1:8720  (env STEREO_URL overrides)
+  timeout_s: 1.5
+  min_height_m: 0.03            # a measured rim height outside this range is ignored (fixed height used)
+  max_height_m: 0.35
+
 touch:
   # Touch an object seen by the calibrated camera: above it, slow straight descent, hold, back up.
   object_height_m: 0.09         # paper cup height

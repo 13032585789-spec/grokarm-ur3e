@@ -444,7 +444,9 @@ class Gate:
         else:
             u, v = cup["px"]
         xy = self.table_cal.to_xy(u, v)
-        height = self._cup_height_m(frame, cup)
+        height = await self._stereo_height_m(frame, cup)
+        if height is None:
+            height = self._cup_height_m(frame, cup)
         q = await self._joints_now()
         if isinstance(q, dict):
             return q
@@ -641,6 +643,42 @@ class Gate:
             _x, _y, height = standing_xyz((x0 + w / 2.0, y0 + h), (x0 + w / 2.0, y0), rvec, tvec, matrix)
         except HeightError:
             return None
+        return height
+
+    async def _stereo_height_m(self, frame, cup: dict[str, Any]) -> float | None:
+        """Rim height measured by the stereo depth service (python -m stereo_depth serve).
+
+        Off unless `stereo.url` (config/robot.yaml) or STEREO_URL is set. Any failure, a different
+        image size, or a height outside the plausible range returns None, and the existing paths decide.
+        The request is async with a short timeout so STOP is never delayed.
+        """
+        import os
+        cfg = dict(self.s.robot.get("stereo") or {})
+        url = (os.getenv("STEREO_URL") or cfg.get("url") or "").rstrip("/")
+        if not url or frame is None or not cup.get("bbox"):
+            return None
+        x0, y0, w, h = (float(v) for v in cup["bbox"])
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=float(cfg.get("timeout_s", 1.5))) as client:
+                r = await client.get(f"{url}/api/height", params={"x0": x0, "y0": y0, "w": w, "h": h})
+            data = r.json()
+        except Exception as e:
+            log.warning("stereo height unavailable: %s", e)
+            return None
+        if not data.get("ok"):
+            log.info("stereo height refused: %s", data.get("error"))
+            return None
+        if list(data.get("frame_size") or []) != list(frame.size):
+            log.warning("stereo frame %s != camera frame %s: use CAMERA_URL=%s/frame.jpg",
+                        data.get("frame_size"), frame.size, url)
+            return None
+        height = float(data["height_m"])
+        lo, hi = float(cfg.get("min_height_m", 0.03)), float(cfg.get("max_height_m", 0.35))
+        if not lo <= height <= hi:
+            return None
+        self.history.add(kind="stereo_height", height_mm=round(height * 1000), points=data.get("points"),
+                         plane=data.get("plane"))
         return height
 
     def _marker_size_m(self) -> float:
