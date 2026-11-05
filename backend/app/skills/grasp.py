@@ -74,10 +74,17 @@ def _rot(w: np.ndarray) -> np.ndarray:
     return np.eye(3) + math.sin(th) * K + (1 - math.cos(th)) * K @ K
 
 
+def _with_offset(gp: dict[str, Any], xy: tuple[float, float]) -> tuple[float, float]:
+    """grasp.xy_offset_m: a measured pointing error of the camera position (robot base frame, metres)."""
+    dx, dy = (list(gp.get("xy_offset_m") or [0.0, 0.0]) + [0.0, 0.0])[:2]
+    return float(xy[0]) + float(dx), float(xy[1]) + float(dy)
+
+
 def plan_grasp(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[float, float], *,
                height_m: float | None = None, others: Sequence[tuple[float, float]] = ()) -> Plan:
     r = settings.robot
     g, gp = dict(r.get("gripper") or {}), dict(r.get("grasp") or {})
+    xy = _with_offset(gp, xy)
     rel = r.get("relative") or {}
     if not g.get("enabled"):
         raise SkillError(FUORI_LIMITI, "Nessuna pinza configurata (robot.yaml: gripper.enabled).")
@@ -271,6 +278,7 @@ def plan_hover(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[
     wrist turn from the gripper posture dipped the flange ('La traiettoria scenderebbe verso il tavolo')."""
     r = settings.robot
     g, gp = dict(r.get("gripper") or {}), dict(r.get("grasp") or {})
+    xy = _with_offset(gp, xy)
     q = np.asarray(q, dtype=float)
     guard.learn_beam(q)
     e = guard.beam_axis

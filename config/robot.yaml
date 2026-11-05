@@ -78,6 +78,7 @@ grasp:
   above_clear_m: 0.03         # ring this far above every cup rim while travelling
   slide_speed: 0.02           # m/s
   lift_m: 0.08
+  xy_offset_m: [0.0, 0.0]     # added to the camera cup position, robot base frame (x forward, y left), metres. Fix a measured pointing offset here
   seat_bottom_max_m: 0.012    # ring bottom this high above the table when the cup still fits (lower only if it must)
   lift_speed: 0.03
 
