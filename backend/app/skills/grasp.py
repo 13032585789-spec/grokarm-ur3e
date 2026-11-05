@@ -99,10 +99,27 @@ def plan_grasp(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[
     floor = float(g.get("table_clearance_m", 0.003))
     if guard.mesh is not None:
         floor = max(floor, float(mesh_cfg.get("table_margin_m", 0.003)))
-    zc = tz + floor + hh + 0.001
-    d_entry = _cup_diameter(gp, zc + hh - tz)
-    if d_entry + 2 * float(gp.get("entry_margin_m", 0.0005)) > 2 * ri:
-        raise SkillError(FUORI_LIMITI, f"anello_troppo_stretto:{d_entry * 1000:.0f}:{2 * ri * 1000:.0f}")
+    # The ring is seated as HIGH as the cup still fits (grasp.seat_bottom_max_m, ring bottom above the table), never
+    # lower than 1 mm above the guard's table margin. A small error in the table height then costs a looser grip,
+    # not a protective stop against the table.
+    margin = float(gp.get("entry_margin_m", 0.0005))
+    lo = floor + 0.001
+    hi = max(lo, float(gp.get("seat_bottom_max_m", 0.012)))
+    bottom = None
+    for k in range(41):
+        b = hi - (hi - lo) * k / 40
+        if _cup_diameter(gp, b + 2 * hh) + 2 * margin <= 2 * ri:
+            bottom = b
+            break
+    if bottom is None:
+        d = _cup_diameter(gp, lo + 2 * hh)
+        raise SkillError(FUORI_LIMITI, f"anello_troppo_stretto:{d * 1000:.0f}:{2 * ri * 1000:.0f}")
+    zc = tz + bottom + hh
+    d_entry = _cup_diameter(gp, bottom + 2 * hh)
+    # Start low (near the table, or a pose recorded touching it)? Go straight up first, nothing else moves.
+    pre = _lift_first(guard, gp, q, tz + H + float(gp.get("above_clear_m", 0.03)))
+    if pre is not None:
+        q = pre
     base_yaw = math.atan2(float(xy[1]), float(xy[0]))
     reasons: list[str] = []
     saved = list(guard.obstacles)
@@ -113,11 +130,33 @@ def plan_grasp(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[
                                others, saved, reasons)
             if got is not None:
                 got.info["diametro_ingresso_mm"] = round(d_entry * 1000, 1)
+                got.info["anello_fondo_mm"] = round(bottom * 1000, 1)
+                if pre is not None:
+                    got.timeout_s += 15
+                    got.motion.insert(0, MotionStep("movel", None, tuple(round(float(x), 6) for x in pre), 0.03, 0.2))
+                    got.info["prima_su"] = True
                 return got
     finally:
         guard.obstacles = saved
     why = max(set(reasons), key=reasons.count) if reasons else "ik"
     raise SkillError(FUORI_LIMITI, f"Nessun percorso sicuro per prendere il bicchiere ({why}).")
+
+
+def _lift_first(guard: MotionGuard, gp: dict[str, Any], q: np.ndarray, z_clear: float) -> np.ndarray | None:
+    """Joints after a straight vertical lift that brings the lowest gripper point to z_clear, or None when the
+    gripper is already that high (or the lift itself is not possible: then the normal plan decides)."""
+    L = guard._links(q)
+    names = [n for n in ("ring_l", "ring_r", "beam") if n in L] or ["tool"]
+    low = min(min(float(L[n][0][2]), float(L[n][1][2])) - float(L[n][2]) for n in names)
+    if low >= z_clear - 0.005:
+        return None
+    T = guard.kin.fk(q)
+    R = np.array(T[:3, :3])
+    f = T[:3, 3] - R @ guard.kin.tcp + np.array([0.0, 0.0, z_clear - low])
+    q_up = _flange_ik(guard, R, f, q)
+    if q_up is None or guard.check_movel(q, q_up) is not None:
+        return None
+    return np.asarray(q_up, float)
 
 
 def _try_heading(guard, g, gp, q, xy, e, hz, tz, H, zc, others, saved, reasons) -> Plan | None:
