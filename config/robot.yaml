@@ -60,6 +60,9 @@ gripper:
   ring_height_m: 0.010
   # Beam direction in the flange frame. null = learned from the first actual pose where the flange axis is level
   # and the ring hangs straight down (as in the photos). Write it here once known, e.g. [0, -1, 0].
+  # Find it: put the arm where the beam hangs straight down, then
+  #   cd backend && python -m app.skills.mesh_model --beam-down-q <q1..q6 from the pendant, rad>
+  # or turn "Beam dir." in tools/collision_viewer.html until the model matches the real part.
   offset_axis_flange: null
   table_clearance_m: 0.002    # ring / beam never closer than this to the table
   self_margin_m: 0.01         # ring / beam never closer than this to base, upper arm, forearm, wrist 1
@@ -144,6 +147,13 @@ guard:
   # parked pose on 2026-11-05: off until the radii are measured. Table, joint limits, singularities stay on.
   ignore: [autocollisione, pinza_braccio]
   blend_m: 0.02
+  mesh:
+    # Real UR3e collision meshes (config/meshes/ur3e) + gripper mesh, backend/app/skills/mesh_model.py.
+    # Replaces the gripper capsules: those put the arm on the DH points, 120 mm away from the real upper arm.
+    # Needs: pip install python-fcl trimesh. Viewer: tools/collision_viewer.html
+    enabled: true
+    gripper_margin_m: 0.008     # gripper never closer than this to any arm link
+    table_margin_m: 0.003       # gripper / forearm / wrists never closer than this to the table
 
 stereo:
   # ELP stereo USB camera depth service: python -m stereo_depth serve  (see docs/STEREO_DEPTH.md)

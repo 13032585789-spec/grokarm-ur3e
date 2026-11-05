@@ -12,3 +12,6 @@ nbformat>=5.10
 numpy>=1.26
 opencv-python-headless>=4.9
 cryptography>=42
+# mesh collision model (motion guard, gripper vs arm)
+python-fcl>=0.7
+trimesh>=4.0
