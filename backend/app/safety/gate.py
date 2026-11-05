@@ -479,13 +479,22 @@ class Gate:
             return _err("pinza_non_collegata",
                         "夹爪开关是开的，但这台控制器还没有接上夹爪，所以不会抓。关掉开关就用手腕指。")
         xy = tuple(loc["xy_m"])
-        try:
-            plan = self.planner.point_above(q, xy)
-        except SkillError as e:
-            plan = await self._hover_any_pose(q, xy)
-            if plan is None:
-                return e.to_dict()
+        plan = None
         phrase = "用手腕指到杯子上方，停在杯口上面大约 1 厘米。"
+        if (self.s.robot.get("gripper") or {}).get("enabled") and self.motion_guard is not None:
+            from ..skills.grasp import plan_hover   # ring level over the cup, the posture the grasp uses
+            try:
+                plan = await asyncio.to_thread(plan_hover, self.motion_guard, self.s, q, xy)
+                phrase = "把夹爪的环移到杯子正上方，离杯口约 4 厘米，不往下压。"
+            except SkillError as e:
+                log.info("gripper hover refused: %s", e)
+        if plan is None:
+            try:
+                plan = self.planner.point_above(q, xy)
+            except SkillError as e:
+                plan = await self._hover_any_pose(q, xy)
+                if plan is None:
+                    return e.to_dict()
         res = self._propose_computed(
             "indica_bicchiere", {}, plan, q, phrase, "Polso sopra il bicchiere.", source,
             evidenza={"colore": colour, "xy_m": [round(float(v), 4) for v in xy]})

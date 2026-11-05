@@ -93,7 +93,13 @@ def plan_grasp(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[
     H = float(gp.get("cup_height_m", 0.08) if height_m is None else height_m)
     hh = float(g.get("ring_height_m", 0.010)) / 2
     ri = float(g.get("ring_inner_radius_m", 0.0265))
-    zc = tz + float(g.get("table_clearance_m", 0.003)) + hh + 0.001
+    # Ring bottom 1 mm above the strictest table margin the guard will apply (capsules or meshes). Seating it
+    # exactly on the margin made every seat pose fail by rounding (pinza_tavolo_mesh = -0.0).
+    mesh_cfg = ((r.get("guard") or {}).get("mesh") or {})
+    floor = float(g.get("table_clearance_m", 0.003))
+    if guard.mesh is not None:
+        floor = max(floor, float(mesh_cfg.get("table_margin_m", 0.003)))
+    zc = tz + floor + hh + 0.001
     d_entry = _cup_diameter(gp, zc + hh - tz)
     if d_entry + 2 * float(gp.get("entry_margin_m", 0.0005)) > 2 * ri:
         raise SkillError(FUORI_LIMITI, f"anello_troppo_stretto:{d_entry * 1000:.0f}:{2 * ri * 1000:.0f}")
@@ -213,3 +219,52 @@ def plan_place(q: Sequence[float], held: dict[str, Any], settings: Any) -> Plan:
               MotionStep("movel", None, tuple(held["q_pre"]), slow, 0.2),
               MotionStep("movel", None, tuple(held["q_high"]), 0.05, 0.2)]
     return Plan(motion, timeout_s=90, info={})
+
+
+def plan_hover(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[float, float], *,
+               height_m: float | None = None) -> Plan:
+    """'Point at the cup' with the gripper on: the ring held level straight above the cup, beam down (the same
+    posture the grasp uses), a few cm over the rim. The tool-down pointing pose turned the beam sideways and its
+    wrist turn from the gripper posture dipped the flange ('La traiettoria scenderebbe verso il tavolo')."""
+    r = settings.robot
+    g, gp = dict(r.get("gripper") or {}), dict(r.get("grasp") or {})
+    q = np.asarray(q, dtype=float)
+    guard.learn_beam(q)
+    e = guard.beam_axis
+    if not g.get("enabled") or e is None:
+        raise SkillError(FUORI_LIMITI, "anello_sconosciuto")
+    H = float(gp.get("cup_height_m", 0.08) if height_m is None else height_m)
+    off, axial = float(g.get("ring_offset_m", 0.1115)), float(g.get("ring_axial_m", 0.012))
+    ring = np.array([float(xy[0]), float(xy[1]), guard.table_z + H + float(gp.get("above_clear_m", 0.03)) + 0.01])
+    down, f_z = np.array([0.0, 0.0, -1.0]), np.array([0.0, 0.0, 1.0])
+    from ..robot.ur_ik import ik_all
+    base_yaw = math.atan2(float(xy[1]), float(xy[0]))
+    reasons: list[str] = []
+    m = guard_speeds_of(guard)
+    for dyaw in (0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120, 180):
+        yaw = base_yaw + math.radians(dyaw)
+        hz = np.array([math.cos(yaw), math.sin(yaw), 0.0])
+        R = np.column_stack((down, hz, np.cross(hz, down))) @ np.column_stack((e, f_z, np.cross(f_z, e))).T
+        M = np.eye(4)
+        M[:3, :3] = R
+        M[:3, 3] = ring - hz * axial - down * off + R @ guard.kin.tcp
+        for qh in sorted((np.asarray(b, float) for b in ik_all(guard.kin, M, q)),
+                         key=lambda b: float(np.max(np.abs(b - q)))):
+            if not guard.config_ok(qh):
+                reasons.append("postura")
+                continue
+            vias: list[np.ndarray] = []
+            if guard.check_movej(q, qh) is not None:
+                try:
+                    vias = [np.asarray(v, float) for v in guard.plan(q, qh)][:-1]
+                except GuardRejected as err:
+                    reasons.append(err.code)
+                    continue
+            rnd = lambda v: tuple(round(float(x), 6) for x in v)  # noqa: E731
+            motion = [MotionStep("movej", None, rnd(v), m["joint_speed"], m["joint_accel"]) for v in vias + [qh]]
+            travel = float(np.max(np.abs(qh - q))) / max(m["joint_speed"], 1e-3)
+            return Plan(motion, timeout_s=travel * 3 + 20,
+                        info={"xy_mm": [round(float(xy[0]) * 1000, 1), round(float(xy[1]) * 1000, 1)],
+                              "anello_mm": round((ring[2] - guard.table_z) * 1000, 1), "percorso": "pinza"})
+    why = max(set(reasons), key=reasons.count) if reasons else "ik"
+    raise SkillError(FUORI_LIMITI, f"Nessun percorso sicuro sopra il bicchiere ({why}).")

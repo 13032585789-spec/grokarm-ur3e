@@ -153,7 +153,7 @@ guard:
     # Needs: pip install python-fcl trimesh. Viewer: tools/collision_viewer.html
     enabled: true
     gripper_margin_m: 0.008     # gripper never closer than this to any arm link
-    table_margin_m: 0.003       # gripper / forearm / wrists never closer than this to the table
+    table_margin_m: 0.002       # gripper / forearm / wrists never closer than this to the table (grasp seats the ring 1 mm above it)
 
 stereo:
   # ELP stereo USB camera depth service: python -m stereo_depth serve  (see docs/STEREO_DEPTH.md)
