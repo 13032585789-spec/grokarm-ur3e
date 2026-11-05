@@ -159,7 +159,23 @@ class Gate:
         if frame is None:
             return _err("telecamera_non_disponibile", "Nessuna immagine recente dalla telecamera.")
         res = self.cups.scan(frame)
-        layout, cups = self._cup_layout(res.get("cups") or [], frame)
+        raw = res.get("cups") or []
+        plane = Plane.load(self.s.data_dir / "plane.json")
+        if plane is not None and raw:   # only what stands on the table between the four tapes
+            try:
+                h, w = frame.image.shape[:2]
+                if w >= int(1.8 * h):   # side-by-side stereo frame: the plane is on the left eye
+                    w //= 2
+                if (w, h) == tuple(plane.frame_size):
+                    def on_table(c: dict[str, Any]) -> bool:
+                        x0, y0, bw, bh = c["bbox"]
+                        mm = plane.fit.to_mm(x0 + bw / 2, y0 + bh)
+                        return bool(plane.fit.inside_workspace(mm, -8.0))
+                    raw = [c for c in raw if on_table(c)]
+                    res = {**res, "filtro": "nastri"}
+            except Exception as e:   # never hide the camera because of the filter
+                log_event(log, "plane filter failed", error=str(e))
+        layout, cups = self._cup_layout(raw, frame)
         res = {**res, "cups": cups, "layout": layout}
         self.bus.publish("cups", **{k: v for k, v in res.items() if k != "cups"})
         return {"ok": True, **res}
@@ -632,6 +648,17 @@ class Gate:
         c = c if c in ALL_COLOURS else colour_of(c)
         if c is None:
             return _err("richiesta_ambigua", "Di che colore è il bicchiere?", param="colore", opzioni_valide=ALL_COLOURS)
+        plane = Plane.load(self.s.data_dir / "plane.json")
+        if plane is not None:   # the four-tape table calibration (same as point_at_cup)
+            if self.camera is None:
+                return _err("telecamera_non_disponibile", "Telecamera non disponibile.")
+            frame = self.camera.fresh(float((self.s.robot.get("cups") or {}).get("max_frame_age_s", 2.0)))
+            if frame is None:
+                return _err("telecamera_non_disponibile", "Nessuna immagine recente dalla telecamera.")
+            loc = plane.locate(frame.image, c)
+            if not loc.get("ok"):
+                return _err(loc.get("esito", "oggetto_non_trovato"), loc.get("messaggio", ""))
+            return await self._grab_at(c, tuple(loc["xy_m"]), [], None, source)
         if not self.table_cal.ready:
             return _err("non_calibrato", tr("marker_need", self.s.lang))
         scan = self.scan_cups()
@@ -664,6 +691,11 @@ class Gate:
         height = await self._stereo_height_m(frame, cup)
         if height is None:
             height = self._cup_height_m(frame, cup)
+        return await self._grab_at(c, xy, others, height, source)
+
+    async def _grab_at(self, c: str, xy: tuple[float, float], others: list, height: float | None,
+                       source: str) -> dict[str, Any]:
+        from ..skills.grasp import plan_grasp
         q = await self._joints_now()
         if isinstance(q, dict):
             return q
