@@ -65,7 +65,7 @@ gripper:
   ring_outer_radius_m: 0.0335
   ring_height_m: 0.010
   wrist_radius_m: 0.033       # UR3e wrist covers, checked against cups too
-  self_radius_m: 0.06         # gripper never closer than this to the axis of base/upper arm/forearm/wrist 1-2
+  self_radius_m: 0.04         # gripper never closer than this to the axis of base/upper arm/forearm/wrist 1-2
   mass_kg: 0.08               # printed part; WEIGH IT and put the value here
   cog_m: [0.0, 0.0, 0.03]
   set_payload: true

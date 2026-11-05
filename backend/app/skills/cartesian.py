@@ -130,6 +130,7 @@ class Planner:
         self.grip = dict(r.get("gripper") or {})
         self.grip_on = bool(self.grip.get("enabled"))
         self.gsp = dict(r.get("grasp") or {})
+        self._learned_axis: np.ndarray | None = None
 
     # ------------------------------------------------------------ limits ---
     @property
@@ -189,13 +190,18 @@ class Planner:
         if v is not None:
             a = np.array(v, dtype=float)
             return a / np.linalg.norm(a)
+        if self._learned_axis is not None:
+            return self._learned_axis
         R = self.kin.frames(q)[-1][:3, :3]
         best, cand = None, -1.0
         for e in (np.array([1.0, 0, 0]), np.array([-1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, -1.0, 0])):
             down = -float((R @ e)[2])
             if down > cand:
                 best, cand = e, down
-        return best if cand > math.cos(math.radians(15)) else None
+        if cand > math.cos(math.radians(15)):
+            self._learned_axis = best   # the beam is fixed on the flange: one clear pose is enough
+            return best
+        return self._learned_axis
 
     def tool_points(self, q: Sequence[float], axis: np.ndarray | None = None) -> list[np.ndarray]:
         """Points on the printed gripper (base frame): flange plate rim, the wrist cover behind it, the beam and
@@ -231,9 +237,13 @@ class Planner:
     def _check_self(self, q: Sequence[float], axis: np.ndarray | None = None) -> None:
         """Gripper vs the robot's own body: every beam / ring point (in front of the flange, >4.5 cm off its axis) must stay
         outside capsules around base, upper arm, forearm and wrist 1/2 (radius self_radius_m, default 6 cm)."""
+        if axis is None:
+            axis = self._learned_axis
+        if axis is None:
+            return   # beam direction unknown: a guess in all four directions would refuse every move
         fr = self.kin.frames(q)
         o = fr[-1][:3, 3]
-        rad = float(self.grip.get("self_radius_m", 0.06))
+        rad = float(self.grip.get("self_radius_m", 0.04))
         segs = [(fr[i][:3, 3], fr[i + 1][:3, 3]) for i in range(5)]
         segs.append((np.zeros(3), fr[1][:3, 3]))              # base column
         z = fr[-1][:3, 2]
@@ -254,7 +264,7 @@ class Planner:
         if not self.grip_on:
             return
         floor = table_z + float(self.grip.get("table_clearance_m", 0.008))
-        if axis is None and self.grip.get("offset_axis_flange") is not None:
+        if axis is None:
             axis = self.offset_axis(q)
         self._check_self(q, axis)
         for p in self.tool_points(q, axis):
