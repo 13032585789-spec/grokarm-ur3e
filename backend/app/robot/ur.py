@@ -209,7 +209,8 @@ def urscript(motion: Sequence[MotionStep], name: str = "voce_skill") -> str:
             continue
         q = ", ".join(f"{float(x):.5f}" for x in m.joints)
         fn = "movej" if m.move == "movej" else "movel"   # movel with a joint vector: FK computes the target pose
-        lines.append(f"  {fn}([{q}], a={float(m.accel):.3f}, v={float(m.speed):.3f})")
+        blend = f", r={float(m.blend):.4f}" if getattr(m, "blend", 0.0) > 0 else ""
+        lines.append(f"  {fn}([{q}], a={float(m.accel):.3f}, v={float(m.speed):.3f}{blend})")
     lines.append("end")
     return "\n".join(lines) + "\n"
 
