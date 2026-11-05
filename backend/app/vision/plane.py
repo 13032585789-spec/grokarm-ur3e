@@ -241,9 +241,21 @@ class Plane:
         points = [CalPoint(px, (xy[0] * 1000, xy[1] * 1000)) for px, xy in pairs.values()]
         return cls(pairs, size, Calibration.fit(points, size))
 
+    def _saved_tapes(self) -> dict[str, tuple[float, float]]:
+        return {n: (float(p[0][0]), float(p[0][1])) for n, p in self.pairs.items()}
+
+    def camera_moved(self, view: np.ndarray) -> bool:
+        """The camera is fixed: it moved only if fewer than 3 of the SAVED tape positions still show an orange
+        blob nearby. An extra red/orange object (a red cup) no longer looks like a moved camera."""
+        blobs = _orange_centers(view)
+        r = 0.04 * float(np.hypot(*self.frame_size))
+        found = sum(1 for tx, ty in self._saved_tapes().values()
+                    if any(np.hypot(bx - tx, by - ty) < r for bx, by, _ in blobs))
+        return found < 3
+
     def _keep(self, view: np.ndarray) -> Keep:
-        """Base pixel on the table between the tapes, and not on a tape (an orange tape is not a red cup)."""
-        tapes = order_corners(_orange_centers(view)) or {n: p[0] for n, p in self.pairs.items()}
+        """Base pixel on the table between the tapes, and not on a saved tape (an orange tape is not a red cup)."""
+        tapes = self._saved_tapes()
         r = 0.03 * float(np.hypot(*self.frame_size))
 
         def keep(x: float, y: float) -> bool:
@@ -277,16 +289,14 @@ class Plane:
         h, w = view.shape[:2]
         if (w, h) != tuple(self.frame_size):
             return {"ok": False, "esito": "risoluzione", "messaggio": "相机分辨率和标定不一致。"}
-        seen = order_corners(_orange_centers(view))
-        if seen is not None:
-            err = [float(np.hypot(seen[n][0] - self.pairs[n][0][0], seen[n][1] - self.pairs[n][0][1])) for n in seen]
-            diag = float(np.hypot(*self.frame_size))
-            if sum(err) / len(err) > 0.08 * diag:
-                return {"ok": False, "esito": "camera_spostata", "messaggio": "胶带在画面里的位置变了，相机可能动过。"}
+        if self.camera_moved(view):
+            return {"ok": False, "esito": "camera_spostata",
+                    "messaggio": "标定时的四块胶带有两块以上看不到了：相机可能动过，或者胶带被挡住。"}
+        seen = "seen"
         px = footprint(view, colour, self._keep(view))
         if px is None:
             if footprint(view, colour) is not None:
                 return {"ok": False, "esito": "fuori_area", "messaggio": "杯子不在四块胶带围成的桌面上。"}
             return {"ok": False, "esito": "oggetto_non_trovato", "messaggio": f"没有看清{colour}杯子的底部。"}
         x, y = self.fit.to_mm(px[0], px[1])
-        return {"ok": True, "xy_m": (x / 1000.0, y / 1000.0), "px": px, "markers": "saved" if seen is None else "seen"}
+        return {"ok": True, "xy_m": (x / 1000.0, y / 1000.0), "px": px, "markers": seen}
