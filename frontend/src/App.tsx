@@ -61,7 +61,7 @@ export default function App() {
           <div className="col">
             <InspectionPanel status={s} config={store.config} />
             <CameraPanel camera={s?.camera} source={store.config?.camera_source ?? "browser"} zoneLabels={insp?.labels}
-              canPoint={s?.gate === "IDLE" && !s?.inspection?.running} />
+              phoneUrls={store.config?.phone_urls} canPoint={s?.gate === "IDLE" && !s?.inspection?.running} />
             <RobotPanel status={s} layout={store.layout} joints={store.joints} zoneLabels={insp?.labels} />
             <History items={s?.history ?? []} />
             <Metrics metrics={s?.metrics ?? {}} />

@@ -41,6 +41,8 @@ const it = {
   cam_start: "Accendi webcam", cam_stop: "Spegni webcam", cam_device: "Dispositivo", cam_none: "Nessuna immagine ancora.",
   cam_age: "ultimo fotogramma {age} s fa", cam_denied: "Accesso alla webcam negato o non disponibile",
   cam_url_hint: "Le immagini arrivano dall'URL configurato (CAMERA_URL).",
+  phone_open: "Sul telefono, apri con Chrome e accetta l'avviso del certificato, poi accendi la webcam:",
+  touch_hint: "Non c'è una pinza. Dopo il sì, la punta va sopra il bicchiere e lo tocca. Prima calibra il tavolo.",
   inspection: "Ispezione qualità", rule: "Regola", rule_ph: "es. Scarta i pezzi con graffi o anomalie",
   start_inspection: "Avvia ispezione", part_ready: "Pezzo pronto nel vassoio {tray}", analysing: "Analisi in corso…",
   last_inspection: "Ultimo esito", counts: "Conteggi", flow: "{a} ingresso → telecamera → {b} approvati / {c} scartati",
@@ -50,7 +52,8 @@ const it = {
   sk_vai_a_posa: "Vai a posa", sk_indica: "Indica", sk_solleva_vassoio: "Solleva vassoio",
   sk_appoggia_vassoio: "Appoggia vassoio", sk_spingi: "Spingi", sk_porta_in_ispezione: "Porta in ispezione",
   sk_smista: "Smista nel vassoio",
-  cups: "Riconosci bicchieri", cups_none: "Nessun bicchiere colorato visto.", point: "Indica", colour_red: "rosso", colour_orange: "arancione", colour_yellow: "giallo", colour_green: "verde", colour_blue: "blu", colour_purple: "viola", colour_pink: "rosa", colour_white: "bianco", colour_grey: "grigio", colour_black: "nero", cups_bg: "Foto tavolo vuoto", cups_bg_clear: "Cancella sfondo", det_colour: "solo colori vivaci", det_background: "tutti i colori (sfondo)", cups_bg_hint: "Togli tutti i bicchieri, poi scatta la foto del tavolo vuoto: così vede anche bianco, grigio e nero.",
+  cups: "Riconosci bicchieri", cups_none: "Nessun bicchiere colorato visto.", point: "Indica", touch: "Tocca", colour_red: "rosso", colour_orange: "arancione", colour_yellow: "giallo", colour_green: "verde", colour_blue: "blu", colour_purple: "viola", colour_pink: "rosa", colour_white: "bianco", colour_grey: "grigio", colour_black: "nero", cups_bg: "Foto tavolo vuoto", cups_bg_clear: "Cancella sfondo", det_colour: "solo colori vivaci", det_background: "tutti i colori (sfondo)", cups_bg_hint: "Nero, giallo e arancione li vede già; la pelle non conta come arancione. Per bianco e grigio, togli i bicchieri e scatta il tavolo vuoto.",
+  calib: "Calibra tavolo", calib_hint: "Stampa il segno: il quadrato nero misura 50 mm, piatto sul tavolo. La freccia indica il centro del lato destro. Punta verticale: prima il centro, poi la freccia. Poi accendi il riconoscimento e di' il colore: la punta scende da sopra.", marker_center: "Punta al centro", marker_axis: "Punta sulla freccia", marker_seen: "segno visto", marker_missing: "segno non visto", table_reach: "Area del tavolo che il braccio può toccare, dalla sua lunghezza: {w} × {d} mm. Il bicchiere può stare ovunque lì dentro.", calib_undo: "Annulla punto", calib_clear: "Cancella", calib_points: "{n} / 4 punti", calib_ready: "calibrata", calib_err: "errore {mm} mm",
 };
 type Dict = typeof it;
 
@@ -89,6 +92,8 @@ const en: Dict = {
   cam_start: "Turn webcam on", cam_stop: "Turn webcam off", cam_device: "Device", cam_none: "No image yet.",
   cam_age: "last frame {age} s ago", cam_denied: "Webcam access denied or unavailable",
   cam_url_hint: "Frames come from the configured URL (CAMERA_URL).",
+  phone_open: "On the phone, open this in Chrome, accept the certificate warning, then turn the camera on:",
+  touch_hint: "There is no gripper. After you confirm, the tip moves above the cup and touches it. Calibrate the table first.",
   inspection: "Quality inspection", rule: "Rule", rule_ph: "e.g. Reject items with scratches or anomalies",
   start_inspection: "Start inspection", part_ready: "Part ready in tray {tray}", analysing: "Analysing…",
   last_inspection: "Last result", counts: "Counts", flow: "{a} input → camera → {b} approved / {c} rejected",
@@ -97,7 +102,8 @@ const en: Dict = {
   status_PASS: "PASS", status_FAIL: "FAIL", status_UNSURE: "UNSURE", status_NO_FRAME: "NO IMAGE",
   sk_vai_a_posa: "Go to pose", sk_indica: "Point", sk_solleva_vassoio: "Lift tray", sk_appoggia_vassoio: "Put tray down",
   sk_spingi: "Push", sk_porta_in_ispezione: "Bring to camera", sk_smista: "Sort into tray",
-  cups: "Detect cups", cups_none: "No coloured cup in view.", point: "Point", colour_red: "red", colour_orange: "orange", colour_yellow: "yellow", colour_green: "green", colour_blue: "blue", colour_purple: "purple", colour_pink: "pink", colour_white: "white", colour_grey: "grey", colour_black: "black", cups_bg: "Photo of empty table", cups_bg_clear: "Clear background", det_colour: "bright colours only", det_background: "all colours (background)", cups_bg_hint: "Remove all cups, then take the empty-table photo: white, grey and black cups are then detected too.",
+  cups: "Detect cups", cups_none: "No coloured cup in view.", point: "Point", touch: "Touch", colour_red: "red", colour_orange: "orange", colour_yellow: "yellow", colour_green: "green", colour_blue: "blue", colour_purple: "purple", colour_pink: "pink", colour_white: "white", colour_grey: "grey", colour_black: "black", cups_bg: "Photo of empty table", cups_bg_clear: "Clear background", det_colour: "bright colours only", det_background: "all colours (background)", cups_bg_hint: "Black, yellow and orange are detected directly, and skin is not orange. For white and grey, remove the cups and take an empty-table photo.",
+  calib: "Calibrate table", calib_hint: "Print the mark so the black square is 50 mm on a side, flat on the table. The arrow points at the middle of its right edge. Tip straight down: record the centre, then the arrow. Then turn on recognition and name a colour. The tip comes down from above.", marker_center: "Tip on the centre", marker_axis: "Tip on the arrow", marker_seen: "mark in view", marker_missing: "mark not in view", table_reach: "Table area this arm can touch, from its own reach: {w} × {d} mm. A cup can sit anywhere inside it.", calib_undo: "Undo point", calib_clear: "Clear", calib_points: "{n} / 4 points", calib_ready: "calibrated", calib_err: "error {mm} mm",
 };
 
 const zh: Dict = {
@@ -132,6 +138,8 @@ const zh: Dict = {
   camera: "检测相机", cam_browser: "本机摄像头", cam_url: "快照 URL", cam_start: "打开摄像头", cam_stop: "关闭摄像头",
   cam_device: "设备", cam_none: "还没有画面。", cam_age: "最新画面 {age} 秒前", cam_denied: "摄像头被拒绝或不可用",
   cam_url_hint: "画面来自配置的 URL（CAMERA_URL）。",
+  phone_open: "手机用 Chrome 打开下面的地址，警告页点「高级 → 继续」，再打开摄像头：",
+  touch_hint: "没有夹爪。确认后，末端会移到杯子上方再轻轻碰到。要先做完桌面标定。",
   inspection: "质量检测", rule: "规则", rule_ph: "例如：有划痕或异常的判为不合格",
   start_inspection: "开始检测", part_ready: "{tray} 托盘已放好零件", analysing: "分析中…",
   last_inspection: "最近结果", counts: "统计", flow: "{a} 来料 → 相机 → {b} 合格 / {c} 不合格",
@@ -140,7 +148,8 @@ const zh: Dict = {
   status_PASS: "合格", status_FAIL: "不合格", status_UNSURE: "无法判断", status_NO_FRAME: "无画面",
   sk_vai_a_posa: "移动到姿态", sk_indica: "指向", sk_solleva_vassoio: "抬起托盘", sk_appoggia_vassoio: "放下托盘",
   sk_spingi: "推动", sk_porta_in_ispezione: "送到相机前", sk_smista: "分拣到托盘",
-  cups: "识别纸杯", cups_none: "画面里没有彩色纸杯。", point: "指向", colour_red: "红色", colour_orange: "橙色", colour_yellow: "黄色", colour_green: "绿色", colour_blue: "蓝色", colour_purple: "紫色", colour_pink: "粉色", colour_white: "白色", colour_grey: "灰色", colour_black: "黑色", cups_bg: "拍空桌背景", cups_bg_clear: "清除背景", det_colour: "仅鲜艳颜色", det_background: "所有颜色（背景差分）", cups_bg_hint: "先把杯子全部拿走，再拍空桌背景；之后白色、灰色、黑色的杯子也能识别。",
+  cups: "识别纸杯", cups_none: "画面里没有彩色纸杯。", point: "指向", touch: "碰到", colour_red: "红色", colour_orange: "橙色", colour_yellow: "黄色", colour_green: "绿色", colour_blue: "蓝色", colour_purple: "紫色", colour_pink: "粉色", colour_white: "白色", colour_grey: "灰色", colour_black: "黑色", cups_bg: "拍空桌背景", cups_bg_clear: "清除背景", det_colour: "仅鲜艳颜色", det_background: "所有颜色（背景差分）", cups_bg_hint: "黑色、黄色、橘色直接认，皮肤不会当成橘色。白色和灰色仍要先拿走杯子，再拍空桌。",
+  calib: "标定桌面", calib_hint: "打印下面的标记，黑方块边长量成 50 毫米，平放在桌上。箭头指着黑方块右边的中点。针尖竖直朝下，先点在中心，再点在箭头尖上。然后打开识别，说颜色：针尖会先到杯子上方，再慢慢落下。", marker_center: "针尖在标记中心", marker_axis: "针尖在箭头上", marker_seen: "画面里有标记", marker_missing: "画面里还没有标记", table_reach: "这台手臂按自身尺寸在桌面上够得到的范围：{w} × {d} 毫米。纸杯可以放在这片里的任何位置。", calib_undo: "撤销一点", calib_clear: "清除", calib_points: "{n} / 4 个点", calib_ready: "已标定", calib_err: "误差 {mm} 毫米",
 };
 
 const DICTS: Record<string, Dict> = { it, en, zh };

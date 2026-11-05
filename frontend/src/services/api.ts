@@ -39,8 +39,16 @@ async function post(url: string, body?: unknown): Promise<any> {
 export const setLanguage = (lang: string) => post("/api/language", { lang });
 export const startInspection = (rule: string) => post("/api/inspection/start", { rule: rule || null });
 export const pointAtCup = (colour: string) => post("/api/vision/point", { colour });
+export const touchCup = (colour: string) => post("/api/vision/touch", { colour });
 export const scanCups = async () => (await fetch("/api/vision/cups")).json();
 export const cupsBackground = (clear = false) => post(`/api/vision/cups/background${clear ? "?clear=true" : ""}`);
+export const calibration = async () => (await fetch("/api/calibration")).json();
+export const addCalibPoint = (u: number, v: number) => post("/api/calibration/point", { u, v });
+export const editCalibration = (action: "undo" | "clear") => post(`/api/calibration/${action}`);
+export const markerRecord = (which: "center" | "axis") => post(`/api/calibration/marker/${which}`);
+export const computeCorners = () => post("/api/calibration/corners");
+export const gotoCorner = (index: number) => post("/api/calibration/goto", { index });
+export const confirmButton = (actionId: string) => post("/api/confirm-button", { action_id: actionId });
 export const partReady = () => post("/api/world/part-ready");
 
 export async function pushFrame(jpeg: Blob): Promise<void> {

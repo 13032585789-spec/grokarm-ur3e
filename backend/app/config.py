@@ -20,6 +20,8 @@ FRONTEND_DIST = ROOT / "frontend" / "dist"
 MODES = ("sim", "ursim", "real")
 LANGUAGES = {"it": "italiano", "en": "English", "zh": "中文", "es": "español", "fr": "français", "de": "Deutsch",
              "ja": "日本語"}
+# Codes the voice API accepts. Bare "es" is ignored and recognition falls back to auto-detect.
+VOICE_HINTS = {"it": "it", "en": "en", "zh": "zh", "es": "es-ES", "fr": "fr", "de": "de", "ja": "ja"}
 CAMERA_SOURCES = ("browser", "url")
 REAL_MOTION_PHRASE = "STAFF_APPROVED"
 
@@ -48,6 +50,7 @@ class Settings:
     xai_base_url: str = "https://api.x.ai/v1"
     host: str = "127.0.0.1"
     port: int = 8000
+    phone_urls: list[str] = field(default_factory=list)
     config_dir: Path = CONFIG_DIR
     data_dir: Path = DATA_DIR
     warnings: list[str] = field(default_factory=list)
@@ -81,6 +84,13 @@ class Settings:
         c = self.robot["connections"]
         return c["real"]["host"] if self.mode == "real" else (os.getenv("URSIM_HOST") or c["ursim"]["host"])
 
+    def voice_language_hint(self) -> str | None:
+        """BCP-47 code for Grok Voice. The UI keeps short codes (es); the API wants es-ES."""
+        lang = self.lang or self.lang_hint
+        if not lang:
+            return None
+        return VOICE_HINTS.get(lang, lang)
+
     def public(self) -> dict[str, Any]:
         """Safe to send to the UI (no secrets, no hosts)."""
         r = self.robot["robot"]
@@ -88,7 +98,7 @@ class Settings:
                 "polyscope": r.get("polyscope_version"), "zones": self.zones, "directions": self.directions,
                 "ttl_s": self.ttl_s, "grok_model": self.xai_model, "grok_configured": bool(self.xai_api_key),
                 "warnings": self.warnings, "lang": self.lang, "languages": LANGUAGES,
-                "camera_source": self.camera_source, "inspector": self.inspector,
+                "camera_source": self.camera_source, "inspector": self.inspector, "phone_urls": self.phone_urls,
                 "inspection": {k: self.inspection.get(k) for k in ("input_zone", "pass_zone", "fail_zone", "labels")}}
 
 

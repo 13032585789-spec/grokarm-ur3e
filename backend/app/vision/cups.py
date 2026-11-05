@@ -27,12 +27,17 @@ from grokarm_vision.detect import find_candidates
 
 # OpenCV hue is 0..179
 COLOURS: dict[str, list[tuple[int, int]]] = {
-    "red": [(0, 7), (170, 179)],
-    "orange": [(8, 19)],
-    "yellow": [(20, 34)],
-    "green": [(35, 85)],
+    "red": [(0, 8), (170, 179)],
+    "orange": [(9, 22)],
+    "yellow": [(23, 42)],
+    "green": [(43, 85)],
     "blue": [(90, 128)],
     "purple": [(129, 169)],
+}
+# Vivid cups only. Skin sits in the same hues as orange/yellow but with low saturation.
+COLOUR_SV: dict[str, tuple[int, int]] = {
+    "red": (80, 50), "orange": (150, 80), "yellow": (90, 80),
+    "green": (45, 40), "blue": (45, 40), "purple": (45, 40),
 }
 ALL_COLOURS = list(COLOURS) + ["pink", "white", "grey", "black"]
 BGR = {"red": (40, 40, 230), "orange": (0, 140, 255), "yellow": (0, 220, 240), "green": (60, 200, 60),
@@ -101,19 +106,32 @@ def find_cups(image: np.ndarray, zones: list[str], cfg: dict[str, Any]) -> list[
     x0, y0, x1, y1 = cfg.get("roi") or [0.0, 0.0, 1.0, 1.0]
     rx0, ry0, rx1, ry1 = int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h)
     roi = image[ry0:ry1, rx0:rx1]
-    hsv = cv2.cvtColor(cv2.GaussianBlur(roi, (7, 7), 0), cv2.COLOR_BGR2HSV)
-    s_min, v_min = int(cfg.get("min_saturation", 90)), int(cfg.get("min_value", 60))
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    ycrcb = cv2.cvtColor(roi, cv2.COLOR_BGR2YCrCb)
+    # Skin (face, hands) shares orange/yellow hue. Keep it out unless it is vividly saturated.
+    skin = cv2.bitwise_and(
+        cv2.inRange(ycrcb, (0, 133, 77), (255, 173, 127)),
+        cv2.inRange(hsv, (0, 0, 40), (40, 190, 255)))
+    s_min, v_min = int(cfg.get("min_saturation", 50)), int(cfg.get("min_value", 40))
     min_area = float(cfg.get("min_area_frac", 0.002)) * w * h
     max_area = float(cfg.get("max_area_frac", 0.25)) * w * h
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     bounds = zone_bounds(zones, cfg)
     cups: list[Cup] = []
+    masks: list[tuple[str, np.ndarray]] = []
     for colour, ranges in COLOURS.items():
+        cs, cv = COLOUR_SV.get(colour, (s_min, v_min))
         mask = np.zeros(hsv.shape[:2], np.uint8)
         for lo, hi in ranges:
-            mask |= cv2.inRange(hsv, (lo, s_min, v_min), (hi, 255, 255))
+            mask |= cv2.inRange(hsv, (lo, cs, cv), (hi, 255, 255))
+        if colour in ("orange", "yellow", "red"):
+            mask = cv2.bitwise_and(mask, cv2.bitwise_not(skin))
+        masks.append((colour, mask))
+    # Black cups are dark, not saturated, so the colour ranges never see them.
+    masks.append(("black", cv2.inRange(hsv, (0, 0, 0), (179, 110, 65))))
+    for colour, mask in masks:
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         n, _, stats, cents = cv2.connectedComponentsWithStats(mask, connectivity=8)
         for i in range(1, n):
             bx, by, bw, bh, area = (int(v) for v in stats[i])
@@ -230,9 +248,16 @@ class CupFinder:
             cups = find_cups_background(frame.image, bg, self.zones, self.cfg)
         else:
             cups = find_cups(frame.image, self.zones, self.cfg)
+        w, h = frame.size
+        pubs = []
+        for c in cups:
+            d = c.public()
+            x, y, bw, bh = c.bbox
+            d["frac"] = [round(x / w, 4), round(y / h, 4), round(bw / w, 4), round(bh / h, 4)]
+            pubs.append(d)
         ok, buf = cv2.imencode(".jpg", annotate(frame.image, cups, self.zones, self.cfg, self.labels),
-                               [cv2.IMWRITE_JPEG_QUALITY, 80])
+                               [cv2.IMWRITE_JPEG_QUALITY, 70])
         self.last_jpeg = buf.tobytes() if ok else None
-        self.last = {"cups": [c.public() for c in cups], "frame_id": frame.frame_id, "at": time.time(),
+        self.last = {"cups": pubs, "frame_id": frame.frame_id, "at": time.time(),
                      "ms": round((time.perf_counter() - t0) * 1000, 1), "detector": self.detector}
         return self.last

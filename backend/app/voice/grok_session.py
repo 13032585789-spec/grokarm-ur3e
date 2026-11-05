@@ -93,14 +93,13 @@ class GrokSession:
             await self.request_response()
 
     def session_update(self) -> dict[str, Any]:
-        terms = ["stop", "fermati", "ferma", "basta", "alt", "blocca tutto", "vassoio", "sinistra", "centro", "destra",
-                 "solleva", "appoggia", "spingi", "indica", "confermo", "annulla", "procedi", "ispezione", "scarta",
-                 "tray A", "tray B", "tray C", "inspection", "reject", "scratches", "halt", "停", "托盘", "检测"]
+        terms = phrases.keyterms_for(self.s.lang)
         for name in self.gate.reg.selectable_poses():   # pose names + aliases ("home" was heard as "ON")
             terms += [name.replace("_", " ")] + list(self.s.poses[name].get("alias", []))
         tr: dict[str, Any] = {"keyterms": list(dict.fromkeys(t[:50] for t in terms))[:100]}
-        if self.s.lang or self.s.lang_hint:
-            tr["language_hint"] = self.s.lang or self.s.lang_hint
+        hint = self.s.voice_language_hint()
+        if hint:
+            tr["language_hint"] = hint
         return {"type": "session.update", "session": {
             "instructions": build_prompt(self.s, self.gate),
             "voice": self.s.xai_voice,

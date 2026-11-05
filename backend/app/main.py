@@ -60,6 +60,16 @@ class InspectionBody(BaseModel):
     rule: str | None = Field(None, max_length=300)
 
 
+class TouchBody(BaseModel):
+    colour: str = Field(..., min_length=2, max_length=20)
+    zone: str | None = Field(None, max_length=20)
+
+
+class CalPointBody(BaseModel):
+    u: float
+    v: float
+
+
 def make_inspector(s: Settings):
     if s.inspector == "grok" and s.xai_api_key:
         return GrokInspector(s.xai_api_key, s.xai_vision_model, s.xai_base_url)
@@ -174,7 +184,7 @@ def create_app(settings: Settings | None = None, adapter=None, inspector=None) -
             raise HTTPException(409, "CAMERA_SOURCE is not 'browser'")
         data = await request.body()
         try:
-            frame = camera.push(data)
+            frame = await asyncio.to_thread(camera.push, data)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         return {"ok": True, "frame_id": frame.frame_id, "size": list(frame.size)}
@@ -194,7 +204,7 @@ def create_app(settings: Settings | None = None, adapter=None, inspector=None) -
 
     @app.get("/api/vision/cups")
     async def api_cups() -> JSONResponse:
-        r = gate.scan_cups()
+        r = await asyncio.to_thread(gate.scan_cups)
         return JSONResponse(r, status_code=200 if r.get("ok") else 409)
 
     @app.post("/api/vision/point")
@@ -203,6 +213,68 @@ def create_app(settings: Settings | None = None, adapter=None, inspector=None) -
         if r.get("ok") and r.get("action_id") and not state["voice"] and not state["grok_text"]:
             gate.mark_question_asked(r["action_id"])
         return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    @app.post("/api/vision/touch")
+    async def api_touch_cup(body: TouchBody) -> JSONResponse:
+        r = await gate.touch_cup(body.colour, zone=body.zone, source="ui")
+        if r.get("ok") and r.get("action_id") and not state["voice"] and not state["grok_text"]:
+            gate.mark_question_asked(r["action_id"])
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    @app.get("/api/calibration")
+    async def api_calibration() -> dict[str, Any]:
+        return {"ok": True, **gate.table_cal.public(), "tip_length_measured": gate.planner.tip_length_measured,
+                "marker": gate.marker_status()}
+
+    @app.get("/api/calibration/marker.png")
+    async def api_marker_png() -> Response:
+        from .vision.marker import sheet_png
+        return Response(sheet_png(float((gate.s.robot.get("marker") or {}).get("size_m", 0.05))),
+                        media_type="image/png")
+
+    @app.post("/api/calibration/marker/{which}")
+    async def api_marker_record(which: str) -> JSONResponse:
+        r = await gate.marker_record(which)
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    class CalCornerBody(BaseModel):
+        index: int = Field(ge=0, le=3)
+
+    @app.post("/api/calibration/corners")
+    async def api_calibration_corners() -> JSONResponse:
+        r = await gate.calibration_corners()
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    @app.post("/api/calibration/goto")
+    async def api_calibration_goto(body: CalCornerBody) -> JSONResponse:
+        r = await gate.go_calib_corner(body.index)
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    class ConfirmBody(BaseModel):
+        action_id: str | None = None
+
+    @app.post("/api/confirm-button")
+    async def api_confirm_button(body: ConfirmBody) -> JSONResponse:
+        r = await gate.confirm_from_button(body.action_id)
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    @app.post("/api/calibration/point")
+    async def api_calibration_point(body: CalPointBody) -> JSONResponse:
+        r = await gate.calibration_add(body.u, body.v)
+        return JSONResponse(r, status_code=200 if r.get("ok") else 409)
+
+    @app.post("/api/calibration/{action}")
+    async def api_calibration_edit(action: str) -> JSONResponse:
+        if action not in ("undo", "clear"):
+            raise HTTPException(404, "unknown calibration action")
+        return JSONResponse(gate.calibration_edit(action))
+
+    @app.get("/api/calibration.jpg")
+    async def api_calibration_jpg() -> Response:
+        jpg = gate.calibration_image()
+        if jpg is None:
+            raise HTTPException(404, "no camera frame yet")
+        return Response(jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @app.post("/api/vision/cups/background")
     async def api_cups_background(clear: bool = False) -> JSONResponse:

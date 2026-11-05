@@ -41,6 +41,66 @@ tool:
     forca: null
     spintore: null
     punta: null
+  # Straight tool: distance from the flange face to the indicating tip along the tool axis (m), measured
+  # with a ruler. Used by relative moves / touch / calibration. null = relative.assumed_tip_length_m.
+  tip_length_m: null
+
+relative:
+  # "3 cm a sinistra", "ruota la base di 30 gradi". The amount is read from the operator's own words.
+  max_cm: 10
+  max_deg: 45
+  max_joint_change_rad: 0.8     # a Cartesian step needing more than this on any joint is refused (no flips)
+  min_wrist_sin: 0.12           # |sin(wrist 2)| below this = wrist singularity -> refused
+  reach_min_m: 0.12
+  reach_max_m: 0.50
+  table_z_m: 0.0                # table height in the base frame until a camera calibration measures it
+                                # (0 = robot base mounted on the table surface)
+  tip_clearance_m: 0.02         # relative moves never take the tip closer than this to the table
+  joint_clearance_m: 0.04       # elbow / wrists / flange never closer than this to the table
+  assumed_tip_length_m: 0.15
+  # operator's directions as robot-base-frame unit vectors. VERIFY with a 1 cm move and swap if wrong.
+  frame:
+    sinistra: [0, -1, 0]
+    destra:   [0, 1, 0]
+    avanti:   [-1, 0, 0]
+    indietro: [1, 0, 0]
+    su:       [0, 0, 1]
+    giu:      [0, 0, -1]
+  # spoken side -> joint sign (+1/-1). "piu"/"meno" always work. VERIFY on the robot.
+  joint_sides:
+    base:   {sinistra: 1, destra: -1}
+    spalla: {su: -1, giu: 1}
+    gomito: {su: -1, giu: 1}
+    polso1: {su: -1, giu: 1}
+    polso3: {sinistra: 1, destra: -1}
+
+calib:
+  # Parked with the self-computed corners. The live calibration is `marker` below.
+  lift_m: 0.02                  # rise this much before sliding, then lower back to the same height
+  max_m: 0.9                    # a corner farther than this from the current tip is refused
+
+marker:
+  # Printed ArUco (DICT_4X4_50, id 0). Measure the black square; do not scale it to the page.
+  size_m: 0.05
+
+camera_intrinsics:
+  # Phone lens in pixels. All four stay null until they are measured.
+  # While they are null, the pointer keeps the fixed cup height and the measured-height path stays off.
+  fx: null
+  fy: null
+  cx: null
+  cy: null
+
+touch:
+  # Touch an object seen by the calibrated camera: above it, slow straight descent, hold, back up.
+  object_height_m: 0.09         # paper cup height
+  touch_offset_m: 0.005         # stop this far above the top (0 = touch the rim)
+  approach_above_m: 0.08
+  descent_speed: 0.03           # m/s (never above motion.<mode>.linear_speed)
+  hold_s: 0.5
+  workspace_margin_mm: 10       # object must be inside the calibration points' area by this much
+  max_joint_change_rad: 1.2
+  cup_point: bottom             # bbox bottom-centre: where the cup meets the table in a tilted view
 
 motion:
   # Joint-space speed/acceleration (rad/s, rad/s^2) and linear (m/s, m/s^2).
@@ -67,8 +127,8 @@ cups:
   image_zone_order: [sinistra, centro, destra]
   zone_cuts: [0.3333, 0.6667]     # x positions (fraction of image width) of the zone borders
   roi: [0.0, 0.0, 1.0, 1.0]       # x0 y0 x1 y1 fractions: crop to the table, keep the arm out
-  min_saturation: 90
-  min_value: 60
+  min_saturation: 50              # lowered: laptop webcams wash colours out under room light
+  min_value: 40
   min_area_frac: 0.002
   max_area_frac: 0.25
   max_frame_age_s: 2.0

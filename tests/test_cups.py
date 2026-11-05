@@ -17,7 +17,7 @@ def table(*cups: tuple[str, int]) -> np.ndarray:
     """cups: (colour, x centre) on a grey table, 960x540."""
     img = np.full((540, 960, 3), (95, 100, 105), np.uint8)
     bgr = {"red": (30, 30, 210), "blue": (200, 90, 20), "green": (50, 170, 40), "yellow": (30, 210, 230),
-           "white": (245, 245, 245), "black": (25, 25, 25)}
+           "orange": (0, 100, 255), "white": (245, 245, 245), "black": (25, 25, 25)}
     for colour, x in cups:
         cv2.ellipse(img, (x, 300), (45, 30), 0, 0, 360, bgr[colour], -1)
         cv2.rectangle(img, (x - 40, 300), (x + 40, 380), bgr[colour], -1)
@@ -38,6 +38,15 @@ def test_mirrored_camera_and_roi():
     cfg = {"image_zone_order": ["destra", "centro", "sinistra"]}
     assert find_cups(table(("red", 150)), ZONES, cfg)[0].zone == "destra"
     assert find_cups(table(("red", 150)), ZONES, {"roi": [0.5, 0.0, 1.0, 1.0]}) == []
+
+
+def test_orange_black_and_skin():
+    cups = find_cups(table(("orange", 200), ("black", 760)), ZONES, {})
+    assert [(c.colour, c.zone) for c in cups] == [("orange", "sinistra"), ("black", "destra")]
+    skin = np.full((540, 960, 3), (95, 100, 105), np.uint8)
+    cv2.ellipse(skin, (300, 280), (70, 90), 0, 0, 360, (140, 170, 210), -1)
+    cv2.ellipse(skin, (700, 280), (70, 90), 0, 0, 360, (80, 140, 200), -1)
+    assert find_cups(skin, ZONES, {}) == []
 
 
 def test_colour_words():
@@ -97,7 +106,9 @@ async def test_background_mode_finds_white_and_black(gate):
     assert r["ok"] and r["parametri"] == {"posizione": "sinistra"} and r["bicchiere"]["rilevatore"] == "background"
     gate.cancel()
     assert gate.cups_background(clear=True)["detector"] == "colour"
-    assert gate.scan_cups()["cups"] == []          # colour mode ignores white/black
+    left = gate.scan_cups()["cups"]
+    assert [(c["colore"], c["zona"]) for c in left] == [("black", "destra")]
+    assert "frac" in left[0]
 
 
 def test_grok_cup_lookup_validates_reply():

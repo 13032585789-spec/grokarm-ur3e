@@ -49,6 +49,7 @@ export interface Config {
   directions: string[]; ttl_s: number; grok_model: string; grok_configured: boolean; warnings: string[];
   lang: string; languages: Record<string, string>; camera_source: "browser" | "url"; inspector: "grok" | "mock";
   inspection: { input_zone: string; pass_zone: string; fail_zone: string; labels: Record<string, string> } | null;
+  phone_urls?: string[];
 }
 
 export interface Layout { zones: Record<string, number>; poses: Record<string, number[]> }

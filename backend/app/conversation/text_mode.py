@@ -10,7 +10,9 @@ from __future__ import annotations
 from typing import Any
 
 from ..safety.gate import Gate, GateState
-from .rules import Intent, parse, parse_cup, parse_inspection
+from ..skills.amounts import angle_deg, distance_cm, is_repeat
+from ..vision.texts import t as tr
+from .rules import Intent, parse, parse_cup, parse_inspection, parse_jog, parse_jog_batch, parse_side
 
 TEXT_MODE_LABEL = "TEXT MODE — NOT VOICE"
 
@@ -27,6 +29,27 @@ class TextConversation:
         if stopped:
             self.context = None
             return self._out(text, Intent("stop"), "Fermato. Nuovi movimenti bloccati fino a RIPRISTINA.", None)
+
+        batch = parse_jog_batch(text)
+        if batch is not None:
+            if g.pending:
+                g.cancel(source="rules:correzione")
+            return await self._jog_batch(text, batch)
+
+        jog = parse_jog(text)
+        ctx = self.context if self.context and self.context.get("jog") else None
+        if jog is None and ctx:   # answer to "how much?" / "which way?"
+            extra = {}
+            if ctx["jog"] == "rotate" and "verso" not in ctx["params"] and parse_side(text):
+                extra["verso"] = parse_side(text)
+            if extra or distance_cm(text) is not None or angle_deg(text) is not None or is_repeat(text):
+                jog = Intent(ctx["jog"], params={**ctx["params"], **extra})
+        if jog is not None:
+            if jog.note == "cup_colour":
+                return self._out(text, jog, tr("which_cup_colour", g.s.lang), None)
+            if g.pending:
+                g.cancel(source="rules:correzione")
+            return await self._jog(text, jog)
 
         if g.pending is None:
             cup = parse_cup(text)
@@ -53,8 +76,7 @@ class TextConversation:
 
         if intent.kind == "out_of_scope":
             self.context = None
-            return self._out(text, intent, "Non posso farlo. So solo: andare in una posa, indicare una zona, sollevare, "
-                                           "appoggiare o spingere un vassoio.", None)
+            return self._out(text, intent, tr("out_of_scope", g.s.lang), None)
 
         if intent.kind == "clarify":
             if intent.params and self.context:     # answer to the previous question: merge
@@ -81,6 +103,44 @@ class TextConversation:
             return self._out(text, intent, res["frase_conferma"], res)
         extra = res.get("visti") or res.get("opzioni_valide") or []
         return self._out(text, intent, res.get("messaggio", "") + (f" ({', '.join(extra)})" if extra else ""), res)
+
+    async def _jog(self, text: str, intent: Intent) -> dict[str, Any]:
+        g = self.gate
+        p = intent.params
+        if intent.kind == "touch":
+            res = await g.touch_cup(p["colore"], source="rules")
+        elif intent.kind == "rotate":
+            if "verso" not in p:
+                self.context = {"jog": "rotate", "params": p}
+                return self._out(text, intent, "In che verso? (sinistra/destra, su/giù, più/meno)", None)
+            res = await g.propose_rotate(p["giunto"], p["verso"], source="rules")
+        else:
+            res = await g.propose_move(p["direzione"], source="rules")
+        if res.get("ok"):
+            self.context = None
+            g.mark_question_asked(res["action_id"])
+            return self._out(text, intent, res["frase_conferma"], res)
+        asks_amount = "quantita" in (res.get("param"), res.get("parametro"))
+        self.context = {"jog": intent.kind, "params": p} if asks_amount else None
+        extra = res.get("visti") or res.get("opzioni_valide") or []
+        return self._out(text, intent, res.get("messaggio", "") + (f" ({', '.join(extra)})" if extra else ""), res)
+
+    async def _jog_batch(self, text: str, intents: list[Intent]) -> dict[str, Any]:
+        g = self.gate
+        steps = []
+        for intent in intents:
+            p = intent.params
+            if intent.kind == "rotate":
+                steps.append({"kind": "rotate", "giunto": p["giunto"], "verso": p["verso"]})
+            else:
+                steps.append({"kind": "move", "direzione": p["direzione"]})
+        res = await g.propose_batch(steps, source="rules")
+        intent = Intent("batch", params={"passi": str(len(steps))})
+        if res.get("ok"):
+            self.context = None
+            g.mark_question_asked(res["action_id"])
+            return self._out(text, intent, res["frase_conferma"], res)
+        return self._out(text, intent, res.get("messaggio", ""), res)
 
     async def _inspection(self, text: str, intent: Intent) -> dict[str, Any]:
         g = self.gate

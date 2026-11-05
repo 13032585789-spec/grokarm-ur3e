@@ -178,22 +178,15 @@ async def test_ambiguous_proposal_never_pends(gate):
     assert gate.state == GateState.IDLE and gate.pending is None
 
 
-async def test_sequence_needs_confirmation_per_movement(gate):
+async def test_sequence_one_confirmation_runs_every_step(gate):
     r = gate.propose_sequence([{"skill": "solleva_vassoio", "params": {"posizione": "sinistra"}},
                                {"skill": "appoggia_vassoio", "params": {"posizione": "centro"}}])
-    assert r["ok"] and len(r["piano"]) == 2
+    assert r["ok"] and len(r["piano"]) == 2 and "2" in r["frase_conferma"]
     gate.mark_question_asked()
     await say(gate, "sì")
     assert (await gate.confirm(r["action_id"]))["ok"]
-    assert await wait_state(gate, "PENDING_CONFIRMATION")   # step 2 waits for a NEW confirmation
-    step2 = gate.pending
-    assert step2.step_index == 1 and step2.action.skill == "appoggia_vassoio"
-    # the old "sì" cannot authorise step 2
-    gate.mark_question_asked()
-    assert (await gate.confirm(step2.id))["esito"] in ("nessuna_risposta", "duplicato")
-    await say(gate, "confermo")
-    assert (await gate.confirm(step2.id))["ok"]
     assert await wait_state(gate, "IDLE")
+    assert gate.pending is None
     assert gate.world.trays_at == {"centro", "destra"} and not gate.world.holding_tray
 
 
