@@ -46,6 +46,24 @@ tool:
   # with a ruler. Used by relative moves / touch / calibration. null = relative.assumed_tip_length_m.
   tip_length_m: null
 
+gripper:
+  # Printed passive semicircle gripper (config/semicircle_gripper.step + photos 2026-11-05). No actuator.
+  # Plate ⌀63 on the flange; a beam PERPENDICULAR to the flange axis; at its end a level half ring
+  # (inner ⌀53, outer ⌀67, 10 mm tall), mouth facing along the flange axis.
+  # The motion guard adds beam + ring as capsules to its table and self-collision checks.
+  enabled: true
+  plate_radius_m: 0.0315
+  ring_offset_m: 0.1115       # flange axis -> ring centre (the beam)
+  ring_axial_m: 0.012         # flange face -> ring centre along the flange axis (from the photo)
+  ring_outer_radius_m: 0.0335
+  # Beam direction in the flange frame. null = learned from the first actual pose where the flange axis is level
+  # and the ring hangs straight down (as in the photos). Write it here once known, e.g. [0, -1, 0].
+  offset_axis_flange: null
+  table_clearance_m: 0.003    # ring / beam never closer than this to the table
+  self_margin_m: 0.01         # ring / beam never closer than this to base, upper arm, forearm, wrist 1
+  mass_kg: 0.08               # sent as set_payload before every program; WEIGH the part
+  cog_m: [0.0, 0.0, 0.03]
+
 relative:
   # "3 cm a sinistra", "ruota la base di 30 gradi". The amount is read from the operator's own words.
   # No centimetre cap and no 45° cap. One command may turn a joint up to 360°.

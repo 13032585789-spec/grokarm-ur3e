@@ -110,7 +110,14 @@ def _box_dist(p: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> float:
 
 class MotionGuard:
     def __init__(self, kin: Kinematics, cfg: dict[str, Any] | None, *, table_z: float, joint_speed: float,
-                 hubs: dict[str, Sequence[float]] | None = None) -> None:
+                 hubs: dict[str, Sequence[float]] | None = None, gripper: dict[str, Any] | None = None) -> None:
+        # Printed semicircle gripper (semicircle_gripper.step): a beam PERPENDICULAR to the flange axis and a
+        # level half ring at its end, mouth along the flange axis. Modelled as capsules that join the table and
+        # self-collision checks. The beam direction in the flange frame comes from robot.yaml or is learned once
+        # from the first actual pose with the flange axis level and one flange axis pointing straight down.
+        self.grip = dict(gripper or {}) if (gripper or {}).get("enabled") else {}
+        v = self.grip.get("offset_axis_flange")
+        self.beam_axis: np.ndarray | None = (np.array(v, float) / np.linalg.norm(v)) if v is not None else None
         c = {**DEFAULTS, **(cfg or {})}
         c["radii_m"] = {**DEFAULTS["radii_m"], **((cfg or {}).get("radii_m") or {})}
         self.c = c
@@ -128,10 +135,33 @@ class MotionGuard:
         P = [f[:3, 3] for f in fr]
         tip = self.kin.tip(q)
         R = self.c["radii_m"]
-        return {"upper": (P[1], P[2], R["upper"]), "fore": (P[2], P[3], R["fore"]),
-                "w1": (P[3], P[4], R["wrist"]), "w2": (P[4], P[5], R["wrist"]), "w3": (P[5], P[6], R["wrist"]),
-                "tool": (P[6], tip, R["tool"]),
-                "base": (np.zeros(3), np.array([0, 0, float(self.c["base_column_h_m"])]), R["base"])}
+        links = {"upper": (P[1], P[2], R["upper"]), "fore": (P[2], P[3], R["fore"]),
+                 "w1": (P[3], P[4], R["wrist"]), "w2": (P[4], P[5], R["wrist"]), "w3": (P[5], P[6], R["wrist"]),
+                 "tool": (P[6], tip, R["tool"]),
+                 "base": (np.zeros(3), np.array([0, 0, float(self.c["base_column_h_m"])]), R["base"])}
+        if self.grip and self.beam_axis is not None:
+            g = self.grip
+            Rf = fr[-1][:3, :3]
+            z, b = Rf[:, 2], Rf @ self.beam_axis
+            lat = np.cross(z, b)
+            off, ax = float(g.get("ring_offset_m", 0.1115)), float(g.get("ring_axial_m", 0.012))
+            ro = float(g.get("ring_outer_radius_m", 0.0335))
+            c = P[6] + z * ax + b * off
+            root = P[6] + z * 0.008 + b * float(g.get("plate_radius_m", 0.0315))
+            links["beam"] = (root, c - z * ro, 0.012)
+            links["ring_l"] = (c - z * ro, c + lat * ro, 0.008)
+            links["ring_r"] = (c - z * ro, c - lat * ro, 0.008)
+        return links
+
+    def learn_beam(self, q: Sequence[float]) -> None:
+        """Beam direction = the flange x/y axis pointing straight down (within 20°) in this actual pose."""
+        if not self.grip or self.beam_axis is not None:
+            return
+        R = self.kin.frames(q)[-1][:3, :3]
+        for e in ((1.0, 0, 0), (-1.0, 0, 0), (0, 1.0, 0), (0, -1.0, 0)):
+            if -float((R @ np.array(e))[2]) > math.cos(math.radians(20)):
+                self.beam_axis = np.array(e, dtype=float)
+                return
 
     SELF_PAIRS = [("tool", "base"), ("tool", "upper"), ("tool", "fore"), ("tool", "w1"),
                   ("w3", "base"), ("w3", "upper"), ("w3", "fore"),
@@ -158,6 +188,14 @@ class MotionGuard:
         m["punta_nel_tavolo"] = float(L["tool"][1][2]) - (self.table_z - float(self.c["tip_below_table_m"]))
         sm = float(self.c["self_margin_m"])
         m["autocollisione"] = min(_seg_dist(*L[a][:2], *L[b][:2]) - L[a][2] - L[b][2] - sm for a, b in self.SELF_PAIRS)
+        if "beam" in L:
+            gl = float(self.grip.get("table_clearance_m", 0.003))
+            m["pinza_tavolo"] = min(min(L[k][0][2], L[k][1][2]) - L[k][2]
+                                    for k in ("beam", "ring_l", "ring_r")) - (self.table_z + gl)
+            gm = float(self.grip.get("self_margin_m", 0.01))
+            m["pinza_braccio"] = min(_seg_dist(*L[a][:2], *L[b][:2]) - L[a][2] - L[b][2] - gm
+                                     for a in ("beam", "ring_l", "ring_r")
+                                     for b in ("base", "upper", "fore", "w1"))
         if self.obstacles:
             worst = math.inf
             for name, (a, b, r) in L.items():
@@ -361,6 +399,7 @@ class MotionGuard:
         """The motion the robot will actually run, starting from the measured joints ``q0``."""
         t0 = time.monotonic()
         q = np.asarray(q0, float)
+        self.learn_beam(q)
         out: list[MotionStep] = []
         res = GuardResult(motion=out)
         for idx, st in enumerate(motion):
@@ -434,7 +473,8 @@ def guard_from_settings(settings: Any, kin: Kinematics | None = None, table_z: f
     tz = float(rel.get("table_z_m", 0.0)) if table_z is None else float(table_z)
     hubs = {name: p["joints"] for name, p in (settings.poses or {}).items()
             if isinstance(p, dict) and p.get("joints") and (settings.mode != "real" or p.get("verificata_reale"))}
-    return MotionGuard(kin, r.get("guard"), table_z=tz, joint_speed=float(settings.motion["joint_speed"]), hubs=hubs)
+    return MotionGuard(kin, r.get("guard"), table_z=tz, joint_speed=float(settings.motion["joint_speed"]), hubs=hubs,
+                       gripper=r.get("gripper"))
 
 
 def tool_down(yaw: float) -> np.ndarray:
