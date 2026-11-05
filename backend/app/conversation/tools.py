@@ -65,6 +65,17 @@ def tool_schemas(s: Settings, poses: list[str], *, stretch: bool = True) -> list
              "posizione": {"type": "string", "enum": s.zones,
                            "description": "Solo se l'operatore la dice o se il sistema chiede quale."}},
              "required": ["colore"]}},
+        {"type": "function", "name": "grab_cup",
+         "description": "PRENDI e SOLLEVA il bicchiere del colore detto con la pinza a semicerchio: il sistema lo trova "
+                        "nella telecamera, passa sopra gli altri bicchieri, scende dietro, infila l'anello alla base e "
+                        "lo solleva (serve la conferma). Per 'prendi / solleva / afferra / pick up / 拿起 / 抓起 / 托起'.",
+         "parameters": {"type": "object", "properties": {
+             "colore": {"type": "string", "enum": ["red", "orange", "yellow", "green", "blue", "purple", "pink", "white",
+                                                   "grey", "black"]},
+             "posizione": {"type": "string", "enum": s.zones}}, "required": ["colore"]}},
+        {"type": "function", "name": "place_cup",
+         "description": "Rimetti giù il bicchiere sollevato con grab_cup, dove era, e sfila l'anello (serve la conferma).",
+         "parameters": {"type": "object", "properties": {}}},
         {"type": "function", "name": "move_tip",
          "description": "Sposta la punta in linea retta nella direzione detta dall'operatore. La DISTANZA non è un "
                         "parametro: il sistema la legge dalle parole dell'operatore (es. '3 centimetri'); se manca, il "
@@ -180,6 +191,11 @@ async def dispatch(gate: Gate, name: str, args: dict[str, Any], *, source: str =
         if name == "touch_cup":
             return await gate.touch_cup(args.get("colore") or args.get("colour"), zone=args.get("posizione"),
                                         source=source)
+        if name == "grab_cup":
+            return await gate.grab_cup(args.get("colore") or args.get("colour"), zone=args.get("posizione"),
+                                       source=source)
+        if name == "place_cup":
+            return await gate.place_cup(source=source)
         if name == "move_tip":
             return await gate.propose_move(args.get("direzione"), source=source)
         if name == "rotate_joint":

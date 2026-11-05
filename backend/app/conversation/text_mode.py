@@ -121,6 +121,10 @@ class TextConversation:
         p = intent.params
         if intent.kind == "touch":
             res = await g.touch_cup(p["colore"], source="rules")
+        elif intent.kind == "grab":
+            res = await g.grab_cup(p["colore"], source="rules")
+        elif intent.kind == "place":
+            res = await g.place_cup(source="rules")
         elif intent.kind == "rotate":
             if "verso" not in p:
                 self.context = {"jog": "rotate", "params": p}

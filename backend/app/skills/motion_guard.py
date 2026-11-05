@@ -148,9 +148,10 @@ class MotionGuard:
             ro = float(g.get("ring_outer_radius_m", 0.0335))
             c = P[6] + z * ax + b * off
             root = P[6] + z * 0.008 + b * float(g.get("plate_radius_m", 0.0315))
-            links["beam"] = (root, c - z * ro, 0.012)
-            links["ring_l"] = (c - z * ro, c + lat * ro, 0.008)
-            links["ring_r"] = (c - z * ro, c - lat * ro, 0.008)
+            hh = float(g.get("ring_height_m", 0.010)) / 2
+            links["beam"] = (root, c - z * ro - b * (0.008 + hh), 0.008)   # beam ends on top of the ring
+            links["ring_l"] = (c - z * ro, c + lat * ro, hh)
+            links["ring_r"] = (c - z * ro, c - lat * ro, hh)
         return links
 
     def learn_beam(self, q: Sequence[float]) -> None:
@@ -183,7 +184,8 @@ class MotionGuard:
             m["singolarita_spalla"] = (math.hypot(p05[0], p05[1]) - abs(self.kin.d[3])
                                        - float(self.c["min_shoulder_r_m"]))
         L = self._links(q)
-        low = min(min(a[2], b[2]) - r for name, (a, b, r) in L.items() if name not in ("tool", "base"))
+        low = min(min(a[2], b[2]) - r for name, (a, b, r) in L.items()
+                  if name not in ("tool", "base", "beam", "ring_l", "ring_r"))   # gripper: own check below
         m["tavolo"] = low - (self.table_z + float(self.c["link_clearance_m"]))
         m["punta_nel_tavolo"] = float(L["tool"][1][2]) - (self.table_z - float(self.c["tip_below_table_m"]))
         sm = float(self.c["self_margin_m"])

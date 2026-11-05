@@ -28,8 +28,10 @@ def _skill_ready(intent: Intent) -> bool:
 
 def _jog_ready(text: str, intent: Intent) -> bool:
     p = intent.params
-    if intent.kind == "touch":
+    if intent.kind in ("touch", "grab"):
         return "colore" in p
+    if intent.kind == "place":
+        return True
     if intent.kind == "rotate":
         return "giunto" in p and "verso" in p and (angle_deg(text) is not None or is_nudge(text))
     if intent.kind == "move":
@@ -63,6 +65,10 @@ def _plan(gate: Gate, text: str) -> Callable[[], Awaitable[dict[str, Any]]] | No
         async def run_jog() -> dict[str, Any]:
             if jog.kind == "touch":
                 return await gate.touch_cup(p["colore"], source="rules")
+            if jog.kind == "grab":
+                return await gate.grab_cup(p["colore"], source="rules")
+            if jog.kind == "place":
+                return await gate.place_cup(source="rules")
             if jog.kind == "rotate":
                 return await gate.propose_rotate(p["giunto"], p["verso"], source="rules")
             return await gate.propose_move(p["direzione"], source="rules")

@@ -56,13 +56,26 @@ gripper:
   ring_offset_m: 0.1115       # flange axis -> ring centre (the beam)
   ring_axial_m: 0.012         # flange face -> ring centre along the flange axis (from the photo)
   ring_outer_radius_m: 0.0335
+  ring_inner_radius_m: 0.0265
+  ring_height_m: 0.010
   # Beam direction in the flange frame. null = learned from the first actual pose where the flange axis is level
   # and the ring hangs straight down (as in the photos). Write it here once known, e.g. [0, -1, 0].
   offset_axis_flange: null
-  table_clearance_m: 0.003    # ring / beam never closer than this to the table
+  table_clearance_m: 0.002    # ring / beam never closer than this to the table
   self_margin_m: 0.01         # ring / beam never closer than this to base, upper arm, forearm, wrist 1
   mass_kg: 0.08               # sent as set_payload before every program; WEIGH the part
   cog_m: [0.0, 0.0, 0.03]
+grasp:
+  # Paper cup, MEASURE yours. The ring (inner ⌀53) only slides around the cup where it is narrower than that.
+  cup_height_m: 0.08
+  cup_bottom_diameter_m: 0.048
+  cup_top_diameter_m: 0.072
+  entry_margin_m: 0.0005      # per side, ring vs cup while sliding in
+  approach_gap_m: 0.015       # ring this far from the cup before the slide
+  above_clear_m: 0.03         # ring this far above every cup rim while travelling
+  slide_speed: 0.02           # m/s
+  lift_m: 0.08
+  lift_speed: 0.03
 
 relative:
   # "3 cm a sinistra", "ruota la base di 30 gradi". The amount is read from the operator's own words.
