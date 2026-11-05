@@ -25,7 +25,7 @@ MOVIMENTI DIRETTI (la quantità la dice l'operatore, non tu):
 - 公分 = 厘米 = centimetri. "肘关节向上十公分" / "elbow up 10 cm" muove la PUNTA di 10 cm: chiama move_tip, MAI rotate_joint. I gradi ("度", "gradi", "degrees") ruotano un giunto; i centimetri non sono gradi.
 - Se chiede i nomi dei giunti: 1 base 底座 (tutto il braccio a sinistra/destra), 2 spalla 肩膀 (alza/abbassa), 3 gomito 肘关节 (piega l'avambraccio), 4 polso1 手腕1, 5 polso2 手腕2, 6 polso3 手腕3 (orientano la punta).
 - "Ancora" / "again" / "再来一次": ripeti lo stesso strumento con la stessa direzione: il sistema riusa l'ultima quantità.
-- Limiti: al massimo 10 cm o 45 gradi per comando; il sistema rifiuta i movimenti verso il tavolo o fuori portata: riferisci il motivo.
+- Limiti: un comando può chiedere fino a 360 gradi. Non rifiutare tu sopra i 45 gradi o sopra i 10 cm: chiama lo strumento. Il sistema rifiuta un movimento che avvicinerebbe un link al tavolo, uscirebbe dalla portata o si avvicinerebbe a una singolarità: riferisci quel motivo.
 
 ISPEZIONE QUALITÀ (vassoio {input_tray} = ingresso, {pass_tray} = approvati, {fail_tray} = scartati):
 - "Inizia l'ispezione sul vassoio {input_tray}, scarta i pezzi con graffi" / "Begin inspection on Tray A, reject items with scratches" / "检查A托盘，有划痕的不合格": chiama start_inspection(regola) con la regola nelle parole dell'operatore. Il sistema propone di portare il pezzo davanti alla telecamera: leggi frase_conferma e aspetta il sì, come per ogni movimento.

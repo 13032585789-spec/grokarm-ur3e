@@ -48,7 +48,8 @@ tool:
 
 relative:
   # "3 cm a sinistra", "ruota la base di 30 gradi". The amount is read from the operator's own words.
-  # No centimetre cap: a move is refused only when the arm cannot reach it or a link would enter the table.
+  # No centimetre cap and no 45° cap. One command may turn a joint up to 360°.
+  # A move is still refused when a link would enter the table, the tip leaves reach, or a wrist nears a singularity.
   max_deg: 360
   max_joint_change_rad: 6.283185  # 360°: one step may turn a joint a full circle; a link through the table is still refused
   min_wrist_sin: 0.12           # |sin(wrist 2)| below this = wrist singularity -> refused

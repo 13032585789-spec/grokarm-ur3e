@@ -130,7 +130,7 @@ class Planner:
     # ------------------------------------------------------------ limits ---
     @property
     def max_deg(self) -> float:
-        return float(self.rel.get("max_deg", 45))
+        return float(self.rel.get("max_deg", 360))
 
     def _table_z(self, cal: Any) -> float:
         if cal is not None and cal.table_z is not None:
