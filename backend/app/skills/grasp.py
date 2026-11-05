@@ -115,6 +115,10 @@ def plan_grasp(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[
         d = _cup_diameter(gp, lo + 2 * hh)
         raise SkillError(FUORI_LIMITI, f"anello_troppo_stretto:{d * 1000:.0f}:{2 * ri * 1000:.0f}")
     zc = tz + bottom + hh
+    # Seated, the flange axis is ring_offset above the ring: the wrist / flange plate pass right over the rim.
+    roof = bottom + hh + float(g.get("ring_offset_m", 0.1115)) - float(gp.get("wrist_radius_m", 0.035)) - 0.005
+    if H > roof:
+        raise SkillError(FUORI_LIMITI, f"bicchiere_troppo_alto:{H * 1000:.0f}:{roof * 1000:.0f}")
     d_entry = _cup_diameter(gp, bottom + 2 * hh)
     # Start low (near the table, or a pose recorded touching it)? Go straight up first, nothing else moves.
     pre = _lift_first(guard, gp, q, tz + H + float(gp.get("above_clear_m", 0.03)))

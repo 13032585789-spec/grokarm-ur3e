@@ -70,7 +70,7 @@ gripper:
   cog_m: [0.0, 0.0, 0.03]
 grasp:
   # Paper cup, MEASURE yours. The ring (inner ⌀53) only slides around the cup where it is narrower than that.
-  cup_height_m: 0.10  # NOT measured yet: set high so the ring passes over the rim
+  cup_height_m: 0.08           # NOT measured yet. Above ~90 mm the wrist would hit the rim: refused (bicchiere_troppo_alto)
   cup_bottom_diameter_m: 0.042
   cup_top_diameter_m: 0.057
   entry_margin_m: 0.0005      # per side, ring vs cup while sliding in

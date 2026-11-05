@@ -656,6 +656,9 @@ class Gate:
         if key == "anello_troppo_stretto":
             return _err(e.code, f"Il bicchiere è largo {nums[0]} mm dove passa l'anello (accetta {nums[1]} mm): "
                                 "misuralo e scrivi grasp.cup_bottom_diameter_m in robot.yaml.")
+        if key == "bicchiere_troppo_alto":
+            return _err(e.code, f"Il bicchiere è alto {nums[0]} mm: con l'anello alla base il polso passerebbe "
+                                f"sopra il bordo, massimo {nums[1]} mm. Misuralo (grasp.cup_height_m) o usa un bicchiere più basso.")
         return e.to_dict()
 
     async def grab_cup(self, colour: Any, *, zone: Any = None, source: str = "grok") -> dict[str, Any]:
