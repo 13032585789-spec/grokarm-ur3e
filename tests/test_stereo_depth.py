@@ -126,3 +126,36 @@ def test_service_height_end_to_end():
     res = svc.height(x0 - 15, y0 - 15, w + 30, h + 30)
     assert res["ok"] and res["plane"] == "ransac" and abs(res["height_m"] - BLOCK_H) < 0.015, res
     assert svc.frame_jpeg()[:2] == b"\xff\xd8" and svc.depth_jpeg()[:2] == b"\xff\xd8"
+
+
+def test_flat_screen_board_is_found_when_it_does_not_fill_the_frame():
+    """A screen lying flat is sharp but small, and its pixel grid looks like a second board."""
+    from stereo_depth.calib import BOARD, find_corners
+    square = 18
+    cols, rows = BOARD[0] + 1, BOARD[1] + 1
+    board = np.full((rows * square + 40, cols * square + 40), 255, np.uint8)
+    ox = oy = 20
+    for r in range(rows):
+        for c in range(cols):
+            if (r + c) % 2 == 0:
+                board[oy + r * square:oy + (r + 1) * square, ox + c * square:ox + (c + 1) * square] = 0
+    board[::2] = (board[::2].astype(np.uint16) * 3 // 5).astype(np.uint8)
+    frame = np.full((900, 1400), 90, np.uint8)
+    frame[40:200, 40:500] = 20
+    frame[40:180, 800:1300] = 200
+    bh, bw = board.shape
+    frame[-bh - 30:-30, 500:500 + bw] = board
+    got = find_corners(frame, fast=True)
+    assert got is not None and len(got) == BOARD[0] * BOARD[1]
+
+
+def test_opposite_eye_corner_order_is_turned_to_match():
+    from stereo_depth.calib import BOARD, align_board_order
+    cols, rows = BOARD
+    ys, xs = np.mgrid[0:rows, 0:cols]
+    left = (np.stack([xs, ys], axis=-1).reshape(-1, 1, 2) * 20 + 100).astype(np.float32)
+    right = left.reshape(rows, cols, 2)[::-1, ::-1].reshape(-1, 1, 2).copy()
+    right += np.array([30, -5], np.float32)
+    _, aligned = align_board_order(left, right)
+    gap = np.median(np.linalg.norm(aligned.reshape(-1, 2) - left.reshape(-1, 2) - np.array([30, -5]), axis=1))
+    assert gap < 1

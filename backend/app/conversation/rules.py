@@ -11,20 +11,23 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..safety import phrases
+from ..skills.amounts import is_nudge
 
 SKILL_PATTERNS: list[tuple[str, list[str]]] = [
     # order matters: more specific first
     ("appoggia_vassoio", [r"\bappoggi\w*", r"\bdeposit\w*", r"\bmett\w* giu\b", r"\bposa(lo|re)? il vassoio\b",
                           r"\bposalo\b", r"\blascia(lo)? (il vassoio|giu)\b", r"\bmetti(lo)? (nel|nella|in|a)\b",
-                          r"\bsgancia\w*", r"\brilascia\w*"]),
+                          r"\bsgancia\w*", r"\brilascia\w*", "放下", "放到", "搁"]),
     ("solleva_vassoio", [r"\bsolleva\w*", r"\balza\w*", r"\btira(lo)? su\b", r"\bprendi\w*", r"\braccogli\w*",
-                         r"\bpreleva\w*", r"\bsollev\w*", r"\bcarica\w*", r"\blift\w*", r"\bpick\w*"]),
-    ("spingi", [r"\bsping\w*", r"\bspinta\b", r"\bspintona\w*", r"\bpush\w*"]),
+                         r"\bpreleva\w*", r"\bsollev\w*", r"\bcarica\w*", r"\blift\w*", r"\bpick\w*",
+                         "抬", "端起", "叉起", "叉起来"]),
+    ("spingi", [r"\bsping\w*", r"\bspinta\b", r"\bspintona\w*", r"\bpush\w*", "推", "怼"]),
     ("indica", [r"\bindic\w*", r"\bmostra\w*", r"\bpunta\w*", r"\bfammi vedere\b", r"\bsegnala\w*", r"\bpoint\w*",
-                r"\bshow\w*"]),
+                r"\bshow\w*", "指", "戳"]),
     ("vai_a_posa", [r"\bvai\b", r"\btorna\w*", r"\bporta(ti)? (il braccio|in|a)\b", r"\bposizionat\w*",
                     r"\bspostati\b", r"\bmuoviti\b", r"\bgo to\b", r"\breturn\b", r"\bparcheggia\w*", r"\bin posa\b",
-                    r"\bposizione (di )?(attesa|iniziale|home)\b", r"\bhome\b"]),
+                    r"\bposizione (di )?(attesa|iniziale|home)\b", r"\bhome\b",
+                    "回家", "回原位", "初始位置", "等待位置", "回到"]),
 ]
 
 VAGUE_MOVE = [r"\bspost\w*", r"\bmuov\w*", r"\bportalo\b", r"\bportala\b", r"\bfallo\b", r"\bdall altra parte\b",
@@ -32,14 +35,17 @@ VAGUE_MOVE = [r"\bspost\w*", r"\bmuov\w*", r"\bportalo\b", r"\bportala\b", r"\bf
 OUT_OF_SCOPE = [r"\bdisegn\w*", r"\bscriv\w*", r"\bcerchi\w*", r"\bquadrat\w*", r"\bball\w*", r"\bcanta\w*",
                 r"\bvelocit\w*", r"\bcoordinat\w*", r"\btraiettori\w*", r"\bruota\w*", r"\bgira\w*", r"\bsald\w*",
                 r"\bavvita\w*", r"\bafferra\w*", r"\bguarda\w*", r"\bvedi\b", r"\bfoto\w*", r"\bcaffe\b",
-                r"\bdraw\w*", r"\bdance\w*", r"\bgrab\w*"]
+                r"\bdraw\w*", r"\bdance\w*", r"\bgrab\w*", "坐标", "速度", "跳舞", "扔", "安全限制", "抓起", "夹起"]
 
 ZONE_WORDS = {
-    "sinistra": [r"\bsinistr\w*", r"\bsx\b", r"\bleft\b"],
-    "centro": [r"\bcentr\w*", r"\bin mezzo\b", r"\bmezzo\b", r"\bmiddle\b", r"\bcenter\b"],
-    "destra": [r"\bdestr\w*", r"\bdx\b", r"\bright\b"],
+    "sinistra": [r"\bsinistr\w*", r"\bsx\b", r"\bleft\b", "左边", "左侧", "左"],
+    "centro": [r"\bcentr\w*", r"\bin mezzo\b", r"\bmezzo\b", r"\bmiddle\b", r"\bcenter\b", "中间", "中央", "中"],
+    "destra": [r"\bdestr\w*", r"\bdx\b", r"\bright\b", "右边", "右侧", "右"],
 }
-DIR_MARKERS = r"\b(verso|in direzione|direzione|spostandolo|spingendolo|towards?)\b"
+DIR_MARKERS = r"\b(verso|in direzione|direzione|spostandolo|spingendolo|towards?)\b|往|向"
+CAPABILITY_Q = [r"\bcosa (sai|puoi) fare\b", r"\bwhat can you\b", r"\bwhat do you do\b",
+                "你能干什么", "你会什么", "你能做什么", "你可以做什么", "能做什么"]
+TRANSFER_MARK = ["放到", "指到", "从", "移到", r"\bda\b", r"\bto the\b"]
 
 
 @dataclass
@@ -71,34 +77,94 @@ def _zones_in(t: str) -> list[tuple[int, str]]:
     return sorted(set(found))
 
 
+def _pose_pat(c: str) -> str:
+    if re.search(r"[\u3040-\u30ff\u3400-\u9fff]", c):
+        return re.escape(c)
+    return rf"\b{re.escape(c)}\b"
+
+
 def _pose_in(t: str, poses: dict[str, Any]) -> str | None:
     for name, p in poses.items():
         if not p.get("selezionabile"):
             continue
         cands = [name.replace("_", " ")] + [phrases.normalize(a) for a in p.get("alias", [])]
-        if any(re.search(rf"\b{re.escape(c)}\b", t) for c in cands if c):
+        if any(re.search(_pose_pat(c), t) for c in cands if c):
             return name
     return None
 
 
-def parse(text: str, *, poses: dict[str, Any] | None = None, pending: bool = False) -> Intent:
+def _transfer_zones(t: str) -> tuple[str, str] | None:
+    """'从左边指到中间' / 'da sinistra al centro' -> (origin, destination). A push is not a transfer."""
+    if not _any(TRANSFER_MARK, t):
+        return None
+    seen: list[str] = []
+    for _, zone in _zones_in(t):
+        if zone not in seen:
+            seen.append(zone)
+    if len(seen) < 2:
+        return None
+    return seen[0], seen[1]
+
+
+_OTHER_SIDE = {"sinistra": "destra", "destra": "sinistra"}
+_OTHER_WORDS = re.compile(r"另一个|另外一个|换另一|换一个")
+
+
+def earlier_utterance(items: Any, current: str) -> str:
+    """The operator line before this one. History is newest-first and already contains ``current``."""
+    skipped = False
+    for it in items or []:
+        if it.get("kind") != "utterance":
+            continue
+        said = it.get("text") or ""
+        if not skipped and said == current:
+            skipped = True
+            continue
+        return said
+    return ""
+
+
+def parse(text: str, *, poses: dict[str, Any] | None = None, pending: bool = False,
+          prior: str | None = None) -> Intent:
     t = _n(text)
     if not t:
         return Intent("none")
     if phrases.is_stop(text):
         return Intent("stop")
+    if re.search(r"昨天|手动", t):
+        return Intent("out_of_scope")
+    wants_other = bool(_OTHER_WORDS.search(t))
     if pending:
         v = phrases.confirmation_verdict(text)
-        if v == phrases.VALID:
+        correction = bool(re.search(r"不对|不是", t) and _zones_in(t))
+        if v == phrases.VALID and not correction:
             return Intent("confirm", verdict=v)
-        if v in (phrases.NEGATIVE, phrases.UNCERTAIN) and not _skill_of(t):
+        if v in (phrases.NEGATIVE, phrases.UNCERTAIN) and not _skill_of(t) and not wants_other and not correction:
             return Intent("cancel" if v == phrases.NEGATIVE else "confirm", verdict=v)
-    elif phrases.is_cancel(text) and not _skill_of(t):
+    elif phrases.is_cancel(text) and not _skill_of(t) and not wants_other:
         return Intent("cancel")
-    skill = _skill_of(t)
+    if not pending and _any(CAPABILITY_Q, t) and _skill_of(t) is None:
+        return Intent("capabilities")
+    transfer = _transfer_zones(t)
+    if transfer and _skill_of(t) not in ("spingi", "solleva_vassoio"):
+        return Intent("transfer", params={"origine": transfer[0], "destinazione": transfer[1]})
+    skill = _skill_of(t, last=bool(re.search(r"不对|不是", t)))
+    if skill is None and re.search(r"不对|不是", t):
+        zones = _zones_in(t)
+        if zones:
+            return Intent("skill", skill="indica", params={"posizione": zones[-1][1]})
     if skill is None:
         if _any(OUT_OF_SCOPE, t):
             return Intent("out_of_scope")
+        if wants_other:
+            previous = _zones_in(_n(prior or ""))
+            flipped = _OTHER_SIDE.get(previous[-1][1]) if previous else None
+            if flipped is None:
+                return Intent("clarify", note="altro lato")
+            skill = _skill_of(_n(prior or "")) or "solleva_vassoio"
+            if skill == "vai_a_posa":
+                skill = "solleva_vassoio"
+            return Intent("skill", skill=skill, params={"posizione": flipped})
         if _any(VAGUE_MOVE, t):
             return Intent("clarify", note="movimento vago")
         zones = _zones_in(t)
@@ -116,6 +182,18 @@ def parse(text: str, *, poses: dict[str, Any] | None = None, pending: bool = Fal
                 params["posa"] = f"{z[0][1]}_sopra"
     else:
         zones = _zones_in(t)
+        if re.search(r"不对|不是|改成|换成", t) and zones:
+            zones = zones[-1:]
+        if wants_other and not zones:
+            previous = _zones_in(_n(prior or ""))
+            flipped = _OTHER_SIDE.get(previous[-1][1]) if previous else None
+            if flipped is None:
+                return Intent("clarify", note="altro lato")
+            if skill is None:
+                skill = _skill_of(_n(prior or "")) or "solleva_vassoio"
+            if skill == "vai_a_posa":
+                skill = "solleva_vassoio"
+            return Intent("skill", skill=skill, params={"posizione": flipped})
         if skill == "spingi":
             m = re.search(DIR_MARKERS, t)
             if m:
@@ -125,6 +203,11 @@ def parse(text: str, *, poses: dict[str, Any] | None = None, pending: bool = Fal
                     params["direzione"] = after[0]
                 if before:
                     params["posizione"] = before[0]
+                leftover = [z for _, z in zones if z not in params.values()]
+                if "posizione" not in params and leftover:
+                    params["posizione"] = leftover.pop(0)
+                if "direzione" not in params and leftover:
+                    params["direzione"] = leftover.pop(0)
             elif len(zones) >= 2:
                 params["posizione"], params["direzione"] = zones[0][1], zones[1][1]
             elif zones:
@@ -134,11 +217,18 @@ def parse(text: str, *, poses: dict[str, Any] | None = None, pending: bool = Fal
     return Intent("skill", skill=skill, params=params)
 
 
-def _skill_of(t: str) -> str | None:
+def _skill_of(t: str, last: bool = False) -> str | None:
+    found = []
     for skill, pats in SKILL_PATTERNS:
-        if _any(pats, t):
-            return skill
-    return None
+        for p in pats:
+            m = re.search(p, t)
+            if m:
+                found.append((m.start(), skill))
+                break
+    if not found:
+        return None
+    found.sort()
+    return found[-1][1] if last else found[0][1]
 
 
 # ------------------------------------------------------------------ inspection (text mode only, not in the eval baseline)
@@ -168,7 +258,7 @@ def parse_cup(text: str) -> Intent | None:
 
 
 TOUCH_WORDS = [r"\btocc\w*", r"\btouch\w*", r"\btoca\w*", r"\btouche\w*", r"\bberuhr\w*", r"\breach\w*",
-               r"\braggiung\w*", r"\bafferr\w*", r"\bgrab\w*", "碰", "触", "摸", "拿", "抓", "触れ", "タッチ"]
+               r"\braggiung\w*", "碰", "触", "摸", "触れ", "タッチ"]
 CUP_NOUNS = [r"\bbicchier\w*", r"\bcups?\b", r"\bbecher\b", r"\bvaso\b", "纸杯", "杯子", "コップ"]
 ROTATE_WORDS = [r"\bruot\w*", r"\bgir[aio]\w*", r"\brotat\w*", r"\bturn\w*", r"\btourne\w*", r"\bdreh\w*", "转",
                 "旋转", "回して", "回す"]
@@ -183,7 +273,7 @@ DIR_PATTERNS = {
     "indietro": [r"\bindietro\b", r"\bback(wards?)?\b", r"\batras\b", r"\barriere\b", r"\bhinten\b", r"\bzuruck\b",
                  "后", "後", "うしろ"],
     "su": [r"\bsu\b", r"\bin alto\b", r"\bsali\w*", r"\balza\w*", r"\bup\b", r"\barriba\b", r"\bhaut\b", r"\boben\b",
-           r"\bhoch\b", "上", "抬", "うえ"],
+           r"\bhoch\b", "上", "抬", "高", "うえ"],
     "giu": [r"\bgiu\b", r"\bin basso\b", r"\bscendi\w*", r"\babbassa\w*", r"\bdown\b", r"\babajo\b", r"\bbas\b",
             r"\bunten\b", r"\brunter\b", "下", "降", "した"],
 }
@@ -236,6 +326,9 @@ def parse_jog(text: str) -> Intent | None:
         if not colour:
             return Intent("clarify", note="cup_colour")
         return Intent("touch", params={"colore": colour})
+    if is_nudge(text) and _first(DIR_PATTERNS, t) == "su" and not _zones_in(t) and not _any(
+            [r"\bvassoi\w*", r"\btrays?\b", "托盘", "トレイ"], t):
+        return Intent("move", params={"direzione": "su"}, note="nudge")
     joint = _first(JOINT_PATTERNS, t)
     side = _first(SIDE_PATTERNS, t) or _first(DIR_PATTERNS, t)
     has_cm = distance_cm(text) is not None and _has_unit(text, "cm")
@@ -248,8 +341,8 @@ def parse_jog(text: str) -> Intent | None:
     d = _first(DIR_PATTERNS, t)
     if d is None or _any([r"\bvassoi\w*", r"\btrays?\b", "托盘", "トレイ"], t):
         return None
-    if has_cm or _any(MOVE_WORDS, t) and not _skill_of(t):
-        return Intent("move", params={"direzione": d})
+    if has_cm or (_any(MOVE_WORDS, t) or is_nudge(text)) and not _skill_of(t):
+        return Intent("move", params={"direzione": d}, note="nudge" if is_nudge(text) and not has_cm else "")
     return None
 
 

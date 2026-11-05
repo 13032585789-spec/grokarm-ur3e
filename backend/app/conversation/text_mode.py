@@ -12,7 +12,7 @@ from typing import Any
 from ..safety.gate import Gate, GateState
 from ..skills.amounts import angle_deg, distance_cm, is_repeat
 from ..vision.texts import t as tr
-from .rules import Intent, parse, parse_cup, parse_inspection, parse_jog, parse_jog_batch, parse_side
+from .rules import Intent, earlier_utterance, parse, parse_cup, parse_inspection, parse_jog, parse_jog_batch, parse_side
 
 TEXT_MODE_LABEL = "TEXT MODE — NOT VOICE"
 
@@ -59,7 +59,8 @@ class TextConversation:
             if insp is not None:
                 return await self._inspection(text, insp)
 
-        intent = parse(text, poses=g.s.poses, pending=g.pending is not None)
+        intent = parse(text, poses=g.s.poses, pending=g.pending is not None,
+                       prior=earlier_utterance(g.history.items, text))
 
         if intent.kind == "confirm":
             if intent.verdict != "valida":
@@ -73,6 +74,15 @@ class TextConversation:
             self.context = None
             return self._out(text, intent, "Annullato. Il robot non si muove." if res.get("annullata") else
                              "Non c'è nulla da annullare.", res)
+
+        if intent.kind == "capabilities":
+            from ..capabilities import answer
+            return self._out(text, intent, answer(g), None)
+
+        if intent.kind == "transfer":
+            if g.pending:
+                g.cancel(source="rules:correzione")
+            return await self._transfer(text, intent)
 
         if intent.kind == "out_of_scope":
             self.context = None
@@ -98,6 +108,8 @@ class TextConversation:
         g = self.gate
         self.context = None
         res = await g.point_at_cup(intent.params["colore"], source="rules")
+        if res.get("ok") and res.get("esito") == "esecuzione_avviata":
+            return self._out(text, intent, res.get("messaggio") or "开始。", res)
         if res.get("ok"):
             g.mark_question_asked(res["action_id"])
             return self._out(text, intent, res["frase_conferma"], res)
@@ -116,6 +128,11 @@ class TextConversation:
             res = await g.propose_rotate(p["giunto"], p["verso"], source="rules")
         else:
             res = await g.propose_move(p["direzione"], source="rules")
+        if res.get("ok") and g.s.mode == "real":
+            res = await g._run_operator_command(res)
+        if res.get("esito") == "esecuzione_avviata":
+            self.context = None
+            return self._out(text, intent, res.get("messaggio") or "开始。", res)
         if res.get("ok"):
             self.context = None
             g.mark_question_asked(res["action_id"])
@@ -136,6 +153,11 @@ class TextConversation:
                 steps.append({"kind": "move", "direzione": p["direzione"]})
         res = await g.propose_batch(steps, source="rules")
         intent = Intent("batch", params={"passi": str(len(steps))})
+        if res.get("ok") and g.s.mode == "real":
+            res = await g._run_operator_command(res)
+        if res.get("esito") == "esecuzione_avviata":
+            self.context = None
+            return self._out(text, intent, res.get("messaggio") or "开始。", res)
         if res.get("ok"):
             self.context = None
             g.mark_question_asked(res["action_id"])
@@ -165,9 +187,26 @@ class TextConversation:
             return {"direzione": z}
         return p
 
+    async def _transfer(self, text: str, intent: Intent) -> dict[str, Any]:
+        g = self.gate
+        res = await g.propose_transfer(intent.params["origine"], intent.params["destinazione"], source="rules")
+        if res.get("ok") and g.s.mode == "real":
+            res = await g._run_operator_command(res)
+        if res.get("esito") == "esecuzione_avviata":
+            return self._out(text, intent, res.get("messaggio") or "开始。", res)
+        if res.get("ok"):
+            g.mark_question_asked(res["action_id"])
+            return self._out(text, intent, res["frase_conferma"], res)
+        return self._out(text, intent, res.get("messaggio", "这条路线现在走不了。"), res)
+
     async def _propose(self, text: str, intent: Intent) -> dict[str, Any]:
         g = self.gate
         res = g.propose(intent.skill, intent.params, source="rules")
+        if res.get("ok") and g.s.mode == "real":
+            res = await g._run_operator_command(res)
+        if res.get("esito") == "esecuzione_avviata":
+            self.context = None
+            return self._out(text, intent, res.get("messaggio") or "开始。", res)
         if res.get("ok"):
             self.context = None
             g.mark_question_asked(res["action_id"])

@@ -49,17 +49,17 @@ async def test_confirmation_before_question_is_rejected(gate):
     assert (await gate.confirm(r["action_id"]))["esito"] == "nessuna_risposta"
 
 
-async def test_expired_confirmation(settings, registry, sim, clock):
+async def test_confirmation_does_not_expire(settings, registry, sim, clock):
     g = Gate(settings, registry, sim, EventBus(), Metrics(path=None), History(), clock=clock)
     await g.start()
     try:
         r = g.propose("indica", {"posizione": "centro"})
         g.mark_question_asked()
-        clock.advance(21)  # TTL 20 s
+        clock.advance(3600)
         await say(g, "sì")
         res = await g.confirm(r["action_id"])
-        assert not res["ok"] and res["esito"] in ("scaduta", "nessuna_azione_in_attesa")
-        assert g.state == GateState.IDLE and g.pending is None
+        assert res["ok"], res
+        assert g.pending is None
     finally:
         await g.shutdown()
 

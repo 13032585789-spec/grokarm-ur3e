@@ -144,6 +144,16 @@ async def dispatch(gate: Gate, name: str, args: dict[str, Any], *, source: str =
     """Execute a tool call against the gate. Never raises."""
     if not isinstance(args, dict):
         return {"ok": False, "esito": "argomenti_non_validi"}
+    propose_tools = {"propose_skill", "propose_sequence", "propose_batch", "point_at_cup", "touch_cup",
+                     "move_tip", "rotate_joint"}
+    if (name in propose_tools and str(source).startswith("grok") and gate.utterance is not None
+            and gate.voice_fast_utt == gate.utterance.id):
+        pa = gate.pending
+        if pa is not None:
+            return {"ok": True, "esito": "gia_proposto", "action_id": pa.id,
+                    "frase_conferma": pa.action.conferma,
+                    "istruzione": "这句话已经提出了。不要再说一遍，也不要再提议。"}
+        return {"ok": True, "esito": "esecuzione_avviata", "istruzione": "这句话已经开始执行。不要再提议。"}
     try:
         if name == "propose_skill":
             return gate.propose(args.get("skill"), args.get("parametri") or args.get("params") or {}, source=source)
@@ -154,9 +164,11 @@ async def dispatch(gate: Gate, name: str, args: dict[str, Any], *, source: str =
         if name == "stop":
             return await gate.stop(f"grok_tool:{source}")
         if name == "status":
+            from ..capabilities import describe
             st = gate.status()
             return {"ok": True, "gate": st["gate"], "pending": st["pending"], "world": st["world"],
-                    "robot": {k: st["robot"][k] for k in ("connected", "moving", "safety", "robot_mode")}}
+                    "robot": {k: st["robot"][k] for k in ("connected", "moving", "safety", "robot_mode")},
+                    "puo": describe(gate)}
         if name == "propose_batch":
             return await gate.propose_batch(args.get("passi") or [], source=source)
         if name == "propose_sequence":

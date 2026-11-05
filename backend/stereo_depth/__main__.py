@@ -25,10 +25,38 @@ def cmd_board(a) -> None:
     print(f"Wrote {p}\nPrint it at 100% (no 'fit to page'), glue it flat on cardboard, MEASURE one square in mm.")
 
 
-def _show(name: str, img: np.ndarray, width: int = 1600) -> int:
+def _keys() -> set[int]:
+    """Keys from the picture window and, on Windows, from this terminal.
+
+    The picture window only receives a key while it is the focused window.
+    Typing C in the PowerShell that launched calibrate has to count too.
+    """
+    found: set[int] = set()
+    key = cv2.waitKey(20) & 0xFF
+    if key != 255:
+        found.add(key)
+        if 65 <= key <= 90:
+            found.add(key + 32)
+    if sys.platform.startswith("win"):
+        import msvcrt
+        while msvcrt.kbhit():
+            ch = msvcrt.getwch()
+            if ch in ("\x00", "\xe0"):
+                msvcrt.getwch()
+                continue
+            if ch.isalpha():
+                found.add(ord(ch.lower()))
+            elif ch == "\x03":
+                found.add(3)
+            else:
+                found.add(ord(ch))
+    return found
+
+
+def _show(name: str, img: np.ndarray, width: int = 1600) -> set[int]:
     s = min(1.0, width / img.shape[1])
     cv2.imshow(name, cv2.resize(img, None, fx=s, fy=s))
-    return cv2.waitKey(1) & 0xFF
+    return _keys()
 
 
 def cmd_preview(a) -> None:
@@ -46,14 +74,14 @@ def cmd_preview(a) -> None:
             for x0 in (0, w // 2):
                 cv2.line(both, (x0 + w // 2 * i // 3, 0), (x0 + w // 2 * i // 3, h), (0, 255, 0), 2)
             cv2.line(both, (0, h * i // 3), (w, h * i // 3), (0, 255, 0), 2)
-        if _show("stereo preview (q quits)", both) in (ord("q"), 27):
+        if _show("stereo preview (q quits)", both) & {ord("q"), 27, 3}:
             break
     cam.close()
     cv2.destroyAllWindows()
 
 
 def cmd_calibrate(a) -> None:
-    from .calib import calibrate, find_corners
+    from .calib import align_board_order, calibrate, find_corners
     from .capture import StereoCamera
     cam = StereoCamera(a.cam)
     left, _ = cam.wait_first()
@@ -62,14 +90,17 @@ def cmd_calibrate(a) -> None:
     save_dir.mkdir(parents=True, exist_ok=True)
     L, R = [], []
     print(f"camera {cam.index}, {size[0]}x{size[1]} per eye. Board square = {a.square_mm} mm.")
-    print("Move the board: near/far, tilted left/right/up/down, all corners of the image. "
-          "SPACE = keep (both green), C = compute (>= 12 pairs), Q = quit")
+    print("Move the board: near/far, tilted left/right/up/down, flat on the table, all corners of the image.")
+    print("SPACE = keep (both green), C = compute (>= 12 pairs), Q = quit.")
+    print("Click the picture window first, or type that key in this terminal.")
     while True:
         pair = cam.read()
         if pair is None:
             continue
         l, r = pair
-        small = [cv2.resize(x, None, fx=0.4, fy=0.4) for x in (l, r)]
+        # 0.75, not 0.4: a screen lying flat is smaller in the frame, and the
+        # extra shrink used to drop its squares below what the detector accepts.
+        small = [cv2.resize(x, None, fx=0.75, fy=0.75) for x in (l, r)]
         found = [find_corners(x, fast=True) for x in small]
         view = []
         for img, c in zip(small, found):
@@ -81,20 +112,21 @@ def cmd_calibrate(a) -> None:
         ok_both = all(c is not None for c in found)
         cv2.putText(both, f"pairs: {len(L)}   {'BOTH SEE BOARD - press SPACE' if ok_both else 'board not seen in both'}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0) if ok_both else (0, 0, 255), 2)
-        key = _show("calibrate (SPACE keep, C compute, Q quit)", both)
-        if key in (ord("q"), 27):
+        keys = _show("calibrate (SPACE keep, C compute, Q quit)", both)
+        if keys & {ord("q"), 27, 3}:
             break
-        if key == ord(" ") and ok_both:
+        if ord(" ") in keys and ok_both:
             cl, cr = find_corners(l), find_corners(r)
             if cl is None or cr is None:
                 print("  sharp detection failed, hold the board still and try again")
                 continue
+            cl, cr = align_board_order(cl, cr)
             L.append(cl)
             R.append(cr)
             cv2.imwrite(str(save_dir / f"{len(L):02d}_left.png"), l)
             cv2.imwrite(str(save_dir / f"{len(L):02d}_right.png"), r)
             print(f"  kept pair {len(L)}")
-        if key == ord("c"):
+        if ord("c") in keys:
             if len(L) < 12:
                 print(f"  need >= 12 pairs, have {len(L)}")
                 continue
@@ -104,10 +136,14 @@ def cmd_calibrate(a) -> None:
             from .calib import Rectifier
             intr = Rectifier(cal).intrinsics()
             print(f"saved {a.out}\n{info}")
-            print("Good: rms_stereo < 0.5 px and baseline close to the lens distance measured with a ruler.")
-            print("Paste into config/robot.yaml -> camera_intrinsics (these are the pixels of /frame.jpg):")
-            for k, v in intr.items():
-                print(f"  {k}: {v}")
+            if info["rms_stereo"] < 0.5:
+                print("rms_stereo is under 0.5 px. Check baseline_mm against the distance between the two lenses.")
+                print("Paste into config/robot.yaml -> camera_intrinsics (these are the pixels of /frame.jpg):")
+                for k, v in intr.items():
+                    print(f"  {k}: {v}")
+            else:
+                print(f"rms_stereo {info['rms_stereo']:.3f} px is above 0.5. Do not paste this into robot.yaml.")
+                print("Add more tilted views, including the screen flat on the table, then press C again.")
             break
     cam.close()
     cv2.destroyAllWindows()

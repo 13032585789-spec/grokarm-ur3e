@@ -46,6 +46,7 @@ class GrokSession:
         self.want_response = False
         self.resp_created_at = 0.0
         self.t_speech_end: float | None = None
+        self._turn_closed = False
         self._intent_measured = True
         self._lock = asyncio.Lock()
         self._closing = False
@@ -103,7 +104,7 @@ class GrokSession:
         return {"type": "session.update", "session": {
             "instructions": build_prompt(self.s, self.gate),
             "voice": self.s.xai_voice,
-            "turn_detection": {"type": "server_vad"},
+            "turn_detection": {"type": "server_vad", "silence_duration_ms": 280, "prefix_padding_ms": 200},
             "audio": {"input": {"format": {"type": "audio/pcm", "rate": 24000}, "transcription": tr},
                       "output": {"format": {"type": "audio/pcm", "rate": 24000}}},
             "tools": tool_schemas(self.s, self.gate.reg.selectable_poses()),
@@ -142,6 +143,9 @@ class GrokSession:
         if name == "stop" and self.t_speech_end:
             self.metrics.record("grok_stop_tool_ms", (now - self.t_speech_end) * 1000)
         result = await dispatch(self.gate, name, args, source="grok" if self.mode == "voice" else "grok_text")
+        if (self.mode == "voice" and self.s.mode == "real" and result.get("esito") == "in_attesa_di_conferma"
+                and self.gate.voice_fast_utt != (self.gate.utterance.id if self.gate.utterance else None)):
+            result = await self.gate._run_operator_command(result)
         self.tool_calls.append({"name": name, "args": args, "result": result})
         log_event(log, f"tool {name}", args=args, result={k: result.get(k) for k in ("ok", "esito", "action_id")})
         self.bus.publish("tool", name=name, args=args, result=result, mode=self.mode)
@@ -150,8 +154,11 @@ class GrokSession:
         if name == "save_pose" and result.get("ok"):
             await self.to_xai({"type": "session.update", "session": {
                 "tools": tool_schemas(self.s, self.gate.reg.selectable_poses())}})
-        self.want_response = True
-        if not self.resp_active:
+        # The card is already the question. Another spoken turn only adds delay.
+        self.want_response = result.get("esito") not in ("in_attesa_di_conferma", "gia_proposto", "esecuzione_avviata")
+        if result.get("esito") == "in_attesa_di_conferma" and self.mode == "voice":
+            self.gate.mark_question_asked(result.get("action_id"))
+        if self.want_response and not self.resp_active:
             await self.request_response()
 
     # -------------------------------------------------------- inbound ---
@@ -167,8 +174,11 @@ class GrokSession:
                     await self.to_client(base64.b64decode(ev["delta"]))
             elif t == "input_audio_buffer.speech_started":
                 await self.to_client({"type": "flush"})       # barge-in
+                self._turn_closed = False
+                self.gate.cancel_voice_yes()
                 self.bus.publish("vad", speaking=True)
             elif t == "input_audio_buffer.speech_stopped":
+                self._turn_closed = True
                 self.t_speech_end = time.monotonic()
                 self._intent_measured = False
                 self.bus.publish("vad", speaking=False)
@@ -177,14 +187,14 @@ class GrokSession:
             elif t == "conversation.item.input_audio_transcription.updated":
                 txt = ev.get("transcript", "")
                 self.bus.publish("transcript", role="user", text=txt, final=False, source="voice")
-                self.gate.note_partial(txt)
+                self.gate.note_partial(txt, turn_closed=self._turn_closed, auto_act=self.mode == "voice")
             elif t == "conversation.item.input_audio_transcription.completed":
                 txt = ev.get("transcript", "")
                 alarm = (phrases.is_motion_stop(txt) if self.gate.state == GateState.EXECUTING
                          else phrases.is_stop(txt))
                 if alarm and self.t_speech_end:
                     self.metrics.record("transcript_stop_detect_ms", (time.monotonic() - self.t_speech_end) * 1000)
-                self.gate.note_transcript(txt, source="voice")
+                self.gate.note_transcript(txt, source="voice", auto_act=self.mode == "voice")
             elif t == "response.created":
                 self.resp_active = True
                 self.resp_created_at = self.gate.clock()

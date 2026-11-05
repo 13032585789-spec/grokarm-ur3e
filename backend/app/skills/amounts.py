@@ -155,6 +155,13 @@ def amounts_in_order(text: str) -> list[tuple[str, float]]:
     return [(kind, value) for _, kind, value in found]
 
 
+def is_nudge(text: str) -> bool:
+    """'往上一点' names a direction and no amount. The gate supplies one fixed default."""
+    if angle_deg(text) is not None or length_cm(text) is not None:
+        return False
+    return bool(re.search(r"一点|一点儿|稍微|a bit|a little|un po", _norm(text)))
+
+
 def is_repeat(text: str) -> bool:
     t = _norm(text)
     return any(re.search(p, t) for p in REPEAT)

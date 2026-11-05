@@ -6,7 +6,7 @@ export type UiState =
 
 export interface Pending {
   id: string; skill: string; parametri: Record<string, string>; conferma: string; strumento: string | null;
-  expires_in_s: number; ttl_s: number; question_asked: boolean; step: number; steps: number;
+  expires_in_s: number | null; ttl_s: number; question_asked: boolean; step: number; steps: number;
   sequenza: { move: string; posa: string | null; secondi: number | null }[];
 }
 

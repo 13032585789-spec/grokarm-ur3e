@@ -36,21 +36,57 @@ def board_png(path: str | Path, square_mm: float = 25.0, dpi: int = 300) -> Path
     return path
 
 
+_PLAIN = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
+_SB = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY | cv2.CALIB_CB_NORMALIZE_IMAGE
+
+
+def _gray(image: np.ndarray) -> np.ndarray:
+    return image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+
+def _screen(gray: np.ndarray) -> np.ndarray:
+    """Blur an LCD pixel grid. The squares stay; the moiré that appears when a
+    screen faces the camera does not."""
+    return cv2.GaussianBlur(gray, (5, 5), 0)
+
+
 def find_corners(image: np.ndarray, fast: bool = False) -> np.ndarray | None:
-    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    raw = _gray(image)
     if fast:
-        ok, corners = cv2.findChessboardCorners(gray, BOARD, flags=cv2.CALIB_CB_ADAPTIVE_THRESH |
-                                                cv2.CALIB_CB_NORMALIZE_IMAGE | cv2.CALIB_CB_FAST_CHECK)
-        return corners if ok else None
-    ok, corners = cv2.findChessboardCornersSB(gray, BOARD, flags=cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY)
+        # No CALIB_CB_FAST_CHECK. That shortcut rejects a sharp board that only
+        # fills part of the frame: a screen lying flat, or held lower, farther
+        # from the camera.
+        ok, corners = cv2.findChessboardCorners(_screen(raw), BOARD, flags=_PLAIN)
+        return corners.astype(np.float32) if ok else None
+    ok, corners = cv2.findChessboardCornersSB(raw, BOARD, flags=_SB)
+    if ok:
+        return corners.astype(np.float32)
+    blurred = _screen(raw)
+    ok, corners = cv2.findChessboardCornersSB(blurred, BOARD, flags=_SB)
     if not ok:
-        ok, corners = cv2.findChessboardCorners(gray, BOARD, flags=cv2.CALIB_CB_ADAPTIVE_THRESH |
-                                                cv2.CALIB_CB_NORMALIZE_IMAGE)
+        ok, corners = cv2.findChessboardCorners(blurred, BOARD, flags=_PLAIN)
         if not ok:
             return None
-        corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1),
-                                   (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 1e-4))
+    corners = cv2.cornerSubPix(raw, corners, (11, 11), (-1, -1),
+                               (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 50, 1e-4))
     return corners.astype(np.float32)
+
+
+def align_board_order(left: np.ndarray, right: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Make both eyes number the same physical corner as corner 0.
+
+    Each eye can start at either end of the board. A 180 degree flip on only
+    one eye still looks like a valid grid, and one such pair pulls the stereo
+    error from under a pixel to tens of pixels.
+    """
+    def axis(corners: np.ndarray) -> np.ndarray:
+        grid = corners.reshape(BOARD[1], BOARD[0], 2)
+        return grid[0, -1] - grid[0, 0]
+
+    if float(np.dot(axis(left), axis(right))) >= 0:
+        return left, right
+    flipped = right.reshape(BOARD[1], BOARD[0], 2)[::-1, ::-1].reshape(right.shape).copy()
+    return left, np.ascontiguousarray(flipped)
 
 
 def board_points(square_m: float) -> np.ndarray:

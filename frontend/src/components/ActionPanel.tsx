@@ -5,13 +5,14 @@ import type { Pending, Status } from "../services/types";
 
 function Countdown({ p }: { p: Pending }) {
   const { t } = useT();
-  const [left, setLeft] = useState(p.expires_in_s);
+  const seconds = p.expires_in_s ?? 0;
+  const [left, setLeft] = useState(seconds);
   useEffect(() => {
-    const end = Date.now() + p.expires_in_s * 1000;
-    setLeft(p.expires_in_s);
+    const end = Date.now() + seconds * 1000;
+    setLeft(seconds);
     const t = window.setInterval(() => setLeft(Math.max(0, (end - Date.now()) / 1000)), 200);
     return () => window.clearInterval(t);
-  }, [p.id, p.expires_in_s]);
+  }, [p.id, seconds]);
   return (
     <div className="countdown">
       <div className="countdown-bar" style={{ width: `${(left / p.ttl_s) * 100}%` }} />
@@ -44,7 +45,7 @@ export function ActionPanel({ status, progress, execStart }: {
           </div>
           <div className="confirm-q">«{p.conferma}»</div>
           <div className="hint">{t("answer_hint")}{!p.question_asked && t("waiting_question")}</div>
-          <Countdown p={p} />
+          {p.ttl_s > 0 ? <Countdown p={p} /> : <div className="hint">{t("confirm_anytime")}</div>}
         </>
       ) : executing ? (
         <>

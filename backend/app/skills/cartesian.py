@@ -129,10 +129,6 @@ class Planner:
 
     # ------------------------------------------------------------ limits ---
     @property
-    def max_cm(self) -> float:
-        return float(self.rel.get("max_cm", 10))
-
-    @property
     def max_deg(self) -> float:
         return float(self.rel.get("max_deg", 45))
 
@@ -185,24 +181,32 @@ class Planner:
     def translate(self, q: Sequence[float], direction: str, cm: float, cal: Any = None) -> Plan:
         if direction not in DIRECTIONS:
             raise SkillError(RICHIESTA_AMBIGUA, "Direzione non valida.", param="direzione", options=DIRECTIONS)
-        if not 0 < cm <= self.max_cm:
-            raise SkillError(FUORI_LIMITI, f"Al massimo {self.max_cm:g} cm per comando.", param="quantita")
+        if not math.isfinite(cm) or cm <= 0:
+            raise SkillError(FUORI_LIMITI, "La distanza deve essere maggiore di zero.", param="quantita")
         vec = np.array((self.rel.get("frame") or {}).get(direction) or [0, 0, 0], dtype=float)
         if np.linalg.norm(vec) < 1e-6:
             raise SkillError(FUORI_LIMITI, f"Direzione {direction} non configurata in robot.yaml (relative.frame).")
         vec = vec / np.linalg.norm(vec)
-        T = self.kin.fk(q)
-        T1 = T.copy()
-        T1[:3, 3] = T[:3, 3] + vec * cm / 100.0
+        q = np.array(q, dtype=float)
+        flange, R = self._flange_pose(q)
+        delta = vec * cm / 100.0
+        target = np.array(flange, dtype=float) + delta
+        tip1 = self.kin.tip(q) + delta
+        radius = math.hypot(float(tip1[0]), float(tip1[1]))
+        if radius > float(self.rel.get("reach_max_m", 0.5)):
+            raise SkillError(FUORI_LIMITI, f"Troppo lontano dalla base ({radius * 1000:.0f} mm).")
+        if radius < float(self.rel.get("reach_min_m", 0.12)):
+            raise SkillError(FUORI_LIMITI, "Troppo vicino all'asse della base.")
         tz = self._table_z(cal)
-        clear = float(self.rel.get("tip_clearance_m", 0.02))
-        q1 = self._ik(T1, q, float(self.rel.get("max_joint_change_rad", 0.8)))
-        self._check(q1, tz, tip_clearance=min(clear, T[2, 3] - tz))   # never forbids staying where it already is
-        self._check_path(q, q1, tz, tip_clearance=min(clear, T[2, 3] - tz))
+        z_floor = tz + float(self.rel.get("joint_clearance_m", 0.04))
+        limit = float(self.rel.get("max_joint_change_rad", 0.8))
+        steps = self._flange_segment(q, R, flange, R, target, limit, z_floor)
         m = self._speeds()
+        motion = [MotionStep("movel", None, tuple(round(float(x), 6) for x in qq),
+                             m["linear_speed"], m["linear_accel"]) for qq in steps]
         dur = cm / 100.0 / max(m["linear_speed"], 1e-3)
-        step = MotionStep("movel", None, tuple(round(float(x), 6) for x in q1), m["linear_speed"], m["linear_accel"])
-        return Plan([step], timeout_s=dur * 3 + 8, info={"tip_mm": [round(float(c) * 1000, 1) for c in T1[:3, 3]]})
+        return Plan(motion, timeout_s=dur * 3 + 8,
+                    info={"tip_mm": [round(float(c) * 1000, 1) for c in tip1], "cm": round(cm, 1)})
 
     def rotate(self, q: Sequence[float], joint: str, side: str, deg: float, cal: Any = None) -> Plan:
         if joint not in JOINTS:
@@ -444,7 +448,8 @@ class Planner:
         right = self._flange_segment(left[-1], mid_R, mid_f, R1, f1, limit, z_floor, depth + 1)
         return left + right
 
-    def point_above(self, q: Sequence[float], xy: tuple[float, float], flange_z: float = 0.16) -> Plan:
+    def point_above(self, q: Sequence[float], xy: tuple[float, float], flange_z: float = 0.16, *,
+                    descend: bool = True, lower_to: float | None = None) -> Plan:
         """From the current pose: raise the flange, turn the tool straight down, arc across, stop above xy.
 
         The flange never goes lower than where it already is, and the arc stays at the higher of that height
@@ -506,21 +511,22 @@ class Planner:
                 raise SkillError(FUORI_LIMITI, "La traiettoria scenderebbe verso il tavolo.")
             joints.append(q_next)
             q_cur = q_next
-        # The 15 cm tool length is virtual. Lower the real flange to just above a 9 cm cup.
-        rim = float(self.tch.get("object_height_m", 0.09)) + 0.015
+        # The 15 cm tool length is virtual. A cup point lowers the real flange to just above the rim.
+        # descend=False stays at the hover (point at a zone). lower_to is a flange height in metres.
+        rim = float(lower_to) if lower_to is not None else float(self.tch.get("object_height_m", 0.09)) + 0.015
         here, R_here = self._flange_pose(q_cur)
-        descend: list[np.ndarray] = []
-        if float(here[2]) > rim + 0.01:
+        drop_steps: list[np.ndarray] = []
+        if descend and float(here[2]) > rim + 0.01:
             low = np.array(here, dtype=float)
             low[2] = rim
-            descend = self._flange_segment(q_cur, R_here, here, R_here, low, limit, rim - 0.005)
+            drop_steps = self._flange_segment(q_cur, R_here, here, R_here, low, limit, rim - 0.005)
         m = self._speeds()
         slow = min(m["linear_speed"], 0.05)
         drop = min(slow, float(self.tch.get("descent_speed", 0.03)))
         r = lambda v: tuple(round(float(x), 6) for x in v)  # noqa: E731
         motion = [MotionStep("movej", None, r(qq), m["joint_speed"], m["joint_accel"]) for qq in level]
         motion += [MotionStep("movel", None, r(qq), slow, m["linear_accel"]) for qq in joints]
-        motion += [MotionStep("movel", None, r(qq), drop, m["linear_accel"]) for qq in descend]
+        motion += [MotionStep("movel", None, r(qq), drop, m["linear_accel"]) for qq in drop_steps]
         length = abs(hold - z_floor) + abs(da) * max(r0, r1, 0.05)
         level_deg = math.degrees(float(np.linalg.norm(rotvec(R @ R_start.T))))
         return Plan(motion, timeout_s=length / max(slow, 1e-3) * 3 + 10 + len(level) * 2,
@@ -529,6 +535,63 @@ class Planner:
                           "rim_z_mm": round(rim * 1000, 1),
                           "turn_deg": round(math.degrees(da), 1),
                           "level_deg": round(level_deg, 1)})
+
+    def zone_xy(self, zone: str) -> tuple[float, float]:
+        """Centre of a left/centre/right strip on the taught tape rectangle. Robot left is negative Y."""
+        from ..vision.plane import TAUGHT_TAPE_M
+        xs = [p[0] for p in TAUGHT_TAPE_M.values()]
+        ys = [p[1] for p in TAUGHT_TAPE_M.values()]
+        x = (min(xs) + max(xs)) / 2.0
+        y0, y1 = min(ys), max(ys)
+        t = {"sinistra": 1.0 / 6.0, "centro": 0.5, "destra": 5.0 / 6.0}[zone]
+        return (x, y0 + (y1 - y0) * t)
+
+    def command_plan(self, q: Sequence[float], skill: str, params: dict[str, str]) -> Plan | None:
+        """Motion for a named command, computed from the current joints. None keeps the configured joint pose.
+
+        Home and the waiting pose stay on their joint list. Zone commands (point, lift, place, push,
+        go above a zone) are planned over the taught table, so they do not need a recorded pose.
+        """
+        if skill == "vai_a_posa":
+            pose = str(params.get("posa") or "")
+            if pose.endswith("_sopra"):
+                zone = pose[: -len("_sopra")]
+                if zone in ("sinistra", "centro", "destra"):
+                    return self.point_above(q, self.zone_xy(zone), descend=False)
+            return None
+        zone = params.get("posizione")
+        if zone not in ("sinistra", "centro", "destra"):
+            return None
+        xy = self.zone_xy(zone)
+        if skill == "indica":
+            return self.point_above(q, xy, descend=False)
+        if skill in ("solleva_vassoio", "porta_in_ispezione"):
+            hover = self.point_above(q, xy, descend=False)
+            q2 = hover.motion[-1].joints
+            if q2 is None:
+                return hover
+            up = self.translate(q2, "su", 15.0)
+            return self._join(hover, up)
+        if skill in ("appoggia_vassoio", "smista"):
+            return self.point_above(q, xy, lower_to=0.12)
+        if skill == "spingi":
+            direction = params.get("direzione")
+            if direction not in ("sinistra", "destra"):
+                return None
+            hover = self.point_above(q, xy, descend=False)
+            q2 = hover.motion[-1].joints
+            if q2 is None:
+                return hover
+            from ..vision.plane import TAUGHT_TAPE_M
+            ys = [p[1] for p in TAUGHT_TAPE_M.values()]
+            slide_cm = (max(ys) - min(ys)) / 3.0 * 100.0
+            slide = self.translate(q2, direction, slide_cm)
+            return self._join(hover, slide)
+        return None
+
+    @staticmethod
+    def _join(a: Plan, b: Plan) -> Plan:
+        return Plan(list(a.motion) + list(b.motion), timeout_s=a.timeout_s + b.timeout_s, info={**a.info, **b.info})
 
     def touch(self, q: Sequence[float], xy: tuple[float, float], cal: Any, height_m: float | None = None) -> Plan:
         """Above the point, slow straight descent to the object's top, back up. Tool orientation = calibration's."""
