@@ -91,6 +91,23 @@ camera_intrinsics:
   cx: null
   cy: null
 
+guard:
+  # Motion guard (backend/app/skills/motion_guard.py, docs/MOTION_GUARD.md): every confirmed motion is re-checked
+  # from the robot's actual joints just before it is sent; a blocked movej gets safe via points (same target),
+  # a movel through a singularity is refused or swapped for an equivalent movej. false = send motions unchanged.
+  enabled: true
+  tool_length_m: null           # PHYSICAL tool beyond the flange, = TCP z on the pendant. null = tool.tip_length_m or 0
+  table_z_m: null               # null = relative.table_z_m
+  link_clearance_m: 0.03        # arm surface above the table
+  joint_limits_rad: [6.23, 6.23, 2.8, 6.23, 6.23, 6.23]   # match the pendant's Safety > Joints if staff restricted them
+  min_wrist_sin: 0.10           # movel only: |sin q5|
+  min_elbow_sin: 0.12           # movel only: |sin q3|
+  movel_max_rad_per_m: 15       # movel refused when a joint must turn faster than this per metre of tool travel
+  hubs: [home, attesa]          # named poses usable as via points (real mode: only verificata_reale ones)
+  obstacles: []                 # e.g. - {name: camera_stand, min: [0.35, -0.10, 0.0], max: [0.45, 0.0, 0.70]}
+  max_plan_s: 3.0
+  blend_m: 0.02
+
 stereo:
   # ELP stereo USB camera depth service: python -m stereo_depth serve  (see docs/STEREO_DEPTH.md)
   # null = off. With it on, set CAMERA_SOURCE=url CAMERA_URL=http://127.0.0.1:8720/frame.jpg so the

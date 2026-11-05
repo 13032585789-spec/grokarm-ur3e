@@ -74,6 +74,7 @@ class MotionStep:
     speed: float = 0.0
     accel: float = 0.0
     seconds: float = 0.0
+    blend: float = 0.0              # URScript r= (m) for via points added by the motion guard; 0 = stop there
 
     def public(self) -> dict[str, Any]:
         return {"move": self.move, "posa": self.pose, "secondi": self.seconds or None}

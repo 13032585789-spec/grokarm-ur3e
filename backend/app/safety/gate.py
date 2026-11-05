@@ -27,8 +27,10 @@ from typing import Any, Callable
 from ..config import Settings
 from ..monitoring.events import EventBus, History, Metrics, log_event
 from ..robot.base import COMPLETED, FAILED, NOT_STARTED, STOPPED, UNKNOWN, ExecutionResult, RobotAdapter, RobotStatus
+from ..robot.base import result as _exec_result
 from ..skills.amounts import amounts_in_order, angle_deg, distance_cm, is_repeat, length_cm
 from ..skills.cartesian import DIRECTIONS, JOINTS, Planner, canon_direction, canon_joint, canon_side
+from ..skills.motion_guard import GuardRejected, guard_from_settings, hover_and_lower
 from ..skills.registry import Registry, SkillError, ValidatedAction
 from ..skills.world import WorldModel, joints_close
 from ..vision.inspector import FAIL, PASS, UNSURE, clean_rule
@@ -133,6 +135,7 @@ class Gate:
         self.inspection = InspectionState()
         self._inspect_task: asyncio.Task | None = None
         self.planner = Planner(settings)
+        self._motion_guard = None
         self.table_cal = TableCalibration.load(settings.data_dir / "table_calibration.json")
         self._last_amount: dict[str, float] = {}
         self._calib_corners: list[dict[str, Any]] | None = None
@@ -400,10 +403,29 @@ class Gate:
         try:
             plan = self.planner.point_above(q, xy)
         except SkillError as e:
-            return e.to_dict()
+            plan = await self._hover_any_pose(q, xy)
+            if plan is None:
+                return e.to_dict()
         phrase = "先绕到杯子上方，再降到杯口上面大约 1 厘米，不压下去。可以吗？"
         return self._propose_computed("indica_bicchiere", {}, plan, q, phrase,
                                       "Polso sopra il bicchiere, senza scendere.", source)
+
+    async def _hover_any_pose(self, q: list[float], xy: tuple[float, float]):
+        """Fallback when the arc planner refuses the start pose (e.g. home, tool not pointing down): the fastest
+        safe joint route over every IK branch and tool heading to straight above xy, then the same slow descent."""
+        from ..skills.cartesian import Plan
+        rim = float((self.s.robot.get("touch") or {}).get("object_height_m", 0.09)) + 0.015
+        loop = asyncio.get_running_loop()
+        try:
+            motion, info = await loop.run_in_executor(
+                None, lambda: hover_and_lower(self.motion_guard, q, xy, hover_flange_z=max(0.16, rim + 0.04),
+                                              low_flange_z=rim, speeds=self.s.motion))
+        except GuardRejected as e:
+            log.info("hover fallback refused: %s", e.message)
+            return None
+        return Plan(motion, timeout_s=info["timeout_s"],
+                    info={"xy_mm": [round(xy[0] * 1000, 1), round(xy[1] * 1000, 1)], "rim_z_mm": round(rim * 1000, 1),
+                          "percorso": "guard", "vias": info["vias"]})
 
     async def touch_cup(self, colour: Any, *, zone: Any = None, source: str = "grok") -> dict[str, Any]:
         """Find the cup in the calibrated camera image and propose: above it, slow descent to the rim, back up."""
@@ -1090,10 +1112,17 @@ class Gate:
         run_for = max(float(act.timeout_s), float(self.s.robot["safety"].get("motion_timeout_s", 300)))
         timeout = run_for + float(self.s.robot["safety"].get("execution_timeout_margin_s", 5))
         res: ExecutionResult | None = None
+        motion, rejected = await self._guarded_motion(act, cancel)
         try:
-            res = await asyncio.wait_for(
-                loop.run_in_executor(self._exec_pool, self.robot.execute, act.skill, act.params, act.motion, cancel,
-                                     run_for), timeout)
+            if motion is None:
+                stopped = cancel.is_set()     # STOP arrived while the path was being checked: nothing was sent
+                res = _exec_result(act.skill, act.params, time.time(), STOPPED if stopped else NOT_STARTED, {},
+                                   error="fermato prima del movimento" if stopped else rejected,
+                                   total=len(act.motion))
+            else:
+                res = await asyncio.wait_for(
+                    loop.run_in_executor(self._exec_pool, self.robot.execute, act.skill, act.params, motion, cancel,
+                                         run_for), timeout)
         except asyncio.TimeoutError:
             cancel.set()
             await self._robot_stop("execution timeout")
@@ -1177,6 +1206,40 @@ class Gate:
                          result=res.to_dict())
         else:  # FAILED or UNKNOWN
             self._fault(f"{res.outcome}: {res.error}", pa, res)
+
+    @property
+    def motion_guard(self):
+        if self._motion_guard is None:
+            self._motion_guard = guard_from_settings(self.s)
+        return self._motion_guard
+
+    async def _guarded_motion(self, act: ValidatedAction, cancel: threading.Event) -> tuple[list | None, str]:
+        """Re-check the confirmed motion from the robot's ACTUAL joints right before sending it.
+
+        Blocked direct moves get safe via points (same final target); anything still unsafe is not sent.
+        Fails closed: a guard error means no motion. ``guard.enabled: false`` sends the motion unchanged.
+        """
+        if not (self.s.robot.get("guard") or {}).get("enabled", True):
+            return list(act.motion), ""
+        st = await self.refresh_robot()
+        if not st.joints:
+            return list(act.motion), ""          # the adapter reports "not connected" itself
+        loop = asyncio.get_running_loop()
+        try:
+            r = await loop.run_in_executor(None, self.motion_guard.secure, list(st.joints), list(act.motion))
+        except GuardRejected as e:
+            self.history.add(kind="percorso_rifiutato", skill=act.skill, code=e.code, reason=e.message)
+            return None, f"percorso non sicuro: {e.message}"
+        except Exception as e:  # fail closed
+            log.exception("motion guard")
+            return None, f"controllo del percorso non riuscito ({type(e).__name__}): nessun movimento"
+        if cancel.is_set():
+            return None, "fermato prima del movimento"
+        if r.vias_added or r.replaced:
+            self.history.add(kind="percorso_sicuro", skill=act.skill, vias=r.vias_added, replaced=r.replaced,
+                             plan_ms=r.plan_ms)
+        self.metrics.record("guard_plan_ms", r.plan_ms, skill=act.skill)
+        return r.motion, ""
 
     def _fault(self, reason: str, pa: PendingAction | None, res: ExecutionResult | None = None) -> None:
         self.fault_reason = reason
