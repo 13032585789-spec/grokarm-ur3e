@@ -73,6 +73,7 @@ async def test_execution_timeout_is_fault(gate, sim, settings):
     sim.inject = "hang"
     gate.reg.skills["indica"].timeout_s = 0.2
     settings.robot["safety"]["execution_timeout_margin_s"] = 0.3
+    settings.robot["safety"]["motion_timeout_s"] = 0.2   # the floor would otherwise be 300 s
     r = gate.propose("indica", {"posizione": "centro"})
     gate.mark_question_asked()
     await say(gate, "sì")

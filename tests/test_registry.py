@@ -97,19 +97,32 @@ def test_real_mode_requires_staff_phrase(cfg_dir, tmp_path, monkeypatch):
 
 def test_real_mode_requires_explicit_config(cfg_dir, tmp_path, monkeypatch):
     monkeypatch.setenv("ALLOW_REAL_MOTION", "STAFF_APPROVED")
+    # the committed robot.yaml may have the lab arm enabled: test the opt-in itself
+    p = cfg_dir / "robot.yaml"
+    d = yaml.safe_load(p.read_text())
+    d["connections"]["real"]["enabled"] = False
+    p.write_text(yaml.safe_dump(d))
     with pytest.raises(ConfigError, match="explicit"):
         load_settings("real", config_dir=cfg_dir, data_dir=tmp_path, env_file=None)
 
 
-def test_real_mode_refuses_unverified_poses(cfg_dir, tmp_path, monkeypatch):
+def test_real_mode_flags_unverified_poses(cfg_dir, tmp_path, monkeypatch):
+    # Unrecorded poses are no longer refused outright: the gate re-plans them from the
+    # current joints through the motion guard. They must still be flagged, and never
+    # be used as guard via points on the real arm.
+    from app.skills.motion_guard import guard_from_settings
+
     monkeypatch.setenv("ALLOW_REAL_MOTION", "STAFF_APPROVED")
     p = cfg_dir / "robot.yaml"
     d = yaml.safe_load(p.read_text())
     d["connections"]["real"].update(enabled=True, host="10.0.0.3")
     p.write_text(yaml.safe_dump(d))
     s = load_settings("real", config_dir=cfg_dir, data_dir=tmp_path, env_file=None)
-    with pytest.raises(SkillError, match="registrata"):
-        Registry(s).validate("indica", {"posizione": "centro"}, WorldModel.initial(s.zones, []))
+    assert any("not recordings from this arm" in w for w in s.warnings)
+    Registry(s).validate("indica", {"posizione": "centro"}, WorldModel.initial(s.zones, []))
+    unverified = {k for k, v in s.poses.items() if not v.get("verificata_reale")}
+    assert unverified
+    assert not unverified & set(guard_from_settings(s).hubs)
 
 
 def test_bad_mode(cfg_dir, tmp_path):
