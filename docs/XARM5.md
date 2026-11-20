@@ -29,16 +29,16 @@ The arm is planar after the base: the tool axis always lies in the vertical plan
 current semicircle gripper (beam perpendicular to the flange, flange held level) the ring can only approach a cup
 radially, toward or away from the base.
 
-Simulated reach of the cup grasp (`scripts/reach_map.py`, estimated link radii, 3 cm table clearance):
+Simulated reach of the cup grasp from `home` (grasp planner, 55 mm cup, estimated xArm link radii, 3 cm table clearance, UR mesh model off):
 
 | Arm | Cup distance from the base axis |
 |---|---|
 | UR3e | 125–500 mm (500 = the configured reach cap) |
-| xArm 5, current gripper | 125–400 mm |
+| xArm 5, current gripper | 125–425 mm |
 | xArm 5, tool pointing down (gripper on the flange axis) | 175–675 mm flange positions are valid |
 
 The current gripper does not use the xArm's reach: holding the flange level puts the wrist pitch (J4) at its −97° limit
-or the wrist into the table beyond ~400 mm. A gripper whose ring sits on the flange axis (tool pointing down, ring mouth sideways) would.
+or the wrist into the table beyond ~425 mm. A gripper whose ring sits on the flange axis (tool pointing down, ring mouth sideways) would.
 
 ## First start on the xArm
 
@@ -47,3 +47,8 @@ or the wrist into the table beyond ~400 mm. A gripper whose ring sits on the fla
 3. Gripper direction: pose the arm with the flange level and the ring hanging down, run `scripts\beam_axis.py --write`.
 4. Record `home` and `attesa`: `scripts\record_pose.py home --mode real` (the generated poses are placeholders).
 5. `scripts\reach_map.py`, then `start_real.bat`, hand on the E-stop.
+
+## Camera plane
+
+`data/plane.json` maps the four orange tapes to the UR3e base frame. If the xArm base stands somewhere else, the tape
+positions in the robot frame change: measure the four tapes again from the xArm base before grabbing.
