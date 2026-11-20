@@ -92,20 +92,20 @@ class XArmAdapter:
         if not self.arm.connected:
             self.arm = None
             raise RobotError(f"xArm {self.host} not reachable")
-        g = self.s.robot.get("gripper") or {}
-        if g.get("enabled") and g.get("mass_kg") is not None:
-            try:   # payload in kg, centre of gravity in mm (flange frame)
-                self.arm.set_tcp_load(float(g["mass_kg"]), [float(v) * 1000 for v in (g.get("cog_m") or [0, 0, 0])])
-            except Exception:  # noqa: BLE001
-                pass
-        if self.arm.error_code == 0:
-            self._arm_ready()
+        # Connecting never enables the motors: read-only tools (beam_axis, record_pose) must not change the arm's
+        # state. The first confirmed motion enables it (execute -> _arm_ready).
         self._alive = True
         self._poll = threading.Thread(target=self._poll_loop, daemon=True)
         self._poll.start()
 
     def _arm_ready(self) -> None:
         """Enable the motors, position mode, ready state. Never clears a controller error."""
+        g = self.s.robot.get("gripper") or {}
+        if g.get("enabled") and g.get("mass_kg") is not None:
+            try:   # payload in kg, centre of gravity in mm (flange frame)
+                self.arm.set_tcp_load(float(g["mass_kg"]), [float(v) * 1000 for v in (g.get("cog_m") or [0, 0, 0])])
+            except Exception:  # noqa: BLE001
+                pass
         self.arm.motion_enable(enable=True)
         self.arm.set_mode(0)
         self.arm.set_state(0)
