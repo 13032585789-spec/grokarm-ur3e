@@ -19,6 +19,8 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
+LAG_S = 0.4      # the arm may trail the command by up to this long ...
+LAG_RAD = 0.15   # ... and must then be within this of it
 sys.path.insert(0, str(ROOT / "backend"))
 os.environ.setdefault("ROBOT_CONFIG", "robot_xarm5.yaml")
 
@@ -66,7 +68,15 @@ def main() -> None:
         input("At the start pose. Hand on the E-stop, then press Enter to dance (Ctrl+C stops) ...")
         arm.set_mode(1)          # servo mode: stream joint targets
         arm.set_state(0)
-        time.sleep(0.3)
+        end = time.monotonic() + 3.0
+        while time.monotonic() < end and not (arm.mode == 1 and arm.state in (1, 2)):
+            time.sleep(0.05)
+        if not (arm.mode == 1 and arm.state in (1, 2)) or arm.error_code:
+            raise SystemExit(f"servo mode not ready (mode {arm.mode}, state {arm.state}, error {arm.error_code})")
+        time.sleep(0.2)
+        for _ in range(20):      # hold the start pose for 0.2 s so the controller is streaming before we move
+            arm.set_servo_angle_j([float(v) for v in Q[0]], is_radian=True)
+            time.sleep(0.01)
         if a.music and a.slow == 1.0 and sys.platform == "win32":
             import winsound
             winsound.PlaySound(a.music, winsound.SND_FILENAME | winsound.SND_ASYNC)
@@ -80,9 +90,14 @@ def main() -> None:
             if k % 10 == 0:
                 if arm.error_code:
                     raise RuntimeError(f"controller error {arm.error_code}")
-                lag = float(np.max(np.abs(np.array(arm.angles[:5]) - q)))
-                if lag > 0.25:
-                    raise RuntimeError(f"arm lags {lag:.2f} rad behind the command")
+                # Servo mode always trails the command a little. "Following" = close to SOME command sent in the
+                # last LAG_S seconds; only a real stall or a blocked joint grows beyond that.
+                if k * dt > 0.5:
+                    act = np.array(arm.angles[:5], float)
+                    recent = Q[max(0, k - int(LAG_S / dt)):k + 1]
+                    lag = float(np.min(np.max(np.abs(recent - act), axis=1)))
+                    if lag > LAG_RAD:
+                        raise RuntimeError(f"arm not following: {lag:.2f} rad from every command of the last {LAG_S} s")
         print("done")
     except (KeyboardInterrupt, RuntimeError) as e:
         arm.set_state(4)
