@@ -4,7 +4,7 @@ The project runs on the UR3e (`config/robot.yaml`) or on the xArm 5 (`config/rob
 
 ```
 ROBOT_CONFIG=robot_xarm5.yaml
-ROBOT_HOST=192.168.1.xxx        # xArm control box IP
+ROBOT_HOST=192.168.1.111        # xArm control box IP (optional: robot_xarm5.yaml has it)
 ```
 
 Remove the `ROBOT_CONFIG` line to go back to the UR3e. `ROBOT_MODE=sim` runs without a robot. URSim only simulates UR arms.
