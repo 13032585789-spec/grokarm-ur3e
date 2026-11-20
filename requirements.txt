@@ -15,3 +15,4 @@ cryptography>=42
 # mesh collision model (motion guard, gripper vs arm)
 python-fcl>=0.7
 trimesh>=4.0
+xarm-python-sdk>=1.13      # UFactory xArm 5 driver (only needed with ROBOT_CONFIG=robot_xarm5.yaml)

@@ -125,7 +125,12 @@ class MotionGuard:
         self.kin = kin
         self.table_z = float(c["table_z_m"]) if c.get("table_z_m") is not None else float(table_z)
         self.v = max(float(joint_speed), 1e-3)
-        self.lim = np.array(c["joint_limits_rad"], dtype=float) - float(c["limit_margin_rad"])
+        jl, mg = c["joint_limits_rad"], float(c["limit_margin_rad"])
+        lo = [(-v if not isinstance(v, (list, tuple)) else v[0]) for v in jl]   # scalar = symmetric, [lo, hi] = asymmetric
+        hi = [(v if not isinstance(v, (list, tuple)) else v[1]) for v in jl]
+        self.lo = np.array(lo, dtype=float)[:kin.n] + mg
+        self.hi = np.array(hi, dtype=float)[:kin.n] - mg
+        self.lim = np.maximum(np.abs(self.lo), np.abs(self.hi))
         self.hubs = {k: np.array(v, dtype=float) for k, v in (hubs or {}).items() if k in c["hubs"]}
         self.obstacles = [(o.get("name", "box"), np.array(o["min"], float), np.array(o["max"], float))
                           for o in c["obstacles"]]
@@ -141,9 +146,11 @@ class MotionGuard:
         P = [f[:3, 3] for f in fr]
         tip = self.kin.tip(q)
         R = self.c["radii_m"]
+        F = P[-1]   # flange (P[6] on a UR, P[5] on an xArm 5: its wrist has no third link)
         links = {"upper": (P[1], P[2], R["upper"]), "fore": (P[2], P[3], R["fore"]),
-                 "w1": (P[3], P[4], R["wrist"]), "w2": (P[4], P[5], R["wrist"]), "w3": (P[5], P[6], R["wrist"]),
-                 "tool": (P[6], tip, R["tool"]),
+                 "w1": (P[3], P[4], R["wrist"]), "w2": (P[4], P[5], R["wrist"]),
+                 "w3": (P[5], P[6], R["wrist"]) if len(P) > 6 else (F, F, R["wrist"]),
+                 "tool": (F, tip, R["tool"]),
                  "base": (np.zeros(3), np.array([0, 0, float(self.c["base_column_h_m"])]), R["base"])}
         if self.grip and self.beam_axis is not None:
             g = self.grip
@@ -152,8 +159,8 @@ class MotionGuard:
             lat = np.cross(z, b)
             off, ax = float(g.get("ring_offset_m", 0.1115)), float(g.get("ring_axial_m", 0.012))
             ro = float(g.get("ring_outer_radius_m", 0.0335))
-            c = P[6] + z * ax + b * off
-            root = P[6] + z * 0.008 + b * float(g.get("plate_radius_m", 0.0315))
+            c = F + z * ax + b * off
+            root = F + z * 0.008 + b * float(g.get("plate_radius_m", 0.0315))
             hh = float(g.get("ring_height_m", 0.010)) / 2
             links["beam"] = (root, c - z * ro - b * (0.008 + hh), 0.008)   # beam ends on top of the ring
             links["ring_l"] = (c - z * ro, c + lat * ro, hh)
@@ -184,8 +191,15 @@ class MotionGuard:
         """
         q = np.asarray(q, dtype=float)
         m: dict[str, float] = {}
-        m["limite_giunto"] = float(np.min(self.lim - np.abs(q)))
-        if singular:
+        m["limite_giunto"] = float(min(np.min(q - self.lo), np.min(self.hi - q)))
+        if singular and self.kin.n == 5:
+            # xArm 5: planar arm. Elbow straight (no reach left) or wrist on the base axis (azimuth undefined).
+            fr = self.kin.frames(q)
+            j2, j4 = fr[1][:3, 3], fr[3][:3, 3]
+            a23 = float(self.kin.a[1] + self.kin.a[2])
+            m["singolarita_gomito"] = (a23 - float(np.linalg.norm(j4 - j2))) / a23 - float(self.c["min_elbow_sin"]) / 4
+            m["singolarita_spalla"] = math.hypot(float(j4[0]), float(j4[1])) - float(self.c["min_shoulder_r_m"])
+        elif singular:
             m["singolarita_polso"] = abs(math.sin(q[4])) - float(self.c["min_wrist_sin"])
             m["singolarita_gomito"] = abs(math.sin(q[2])) - float(self.c["min_elbow_sin"])
             p05 = self.kin.frames(q)[5][:3, 3]
@@ -332,11 +346,14 @@ class MotionGuard:
         """Half the samples around the start/goal corridor, half uniform in a sane box (arm above the table)."""
         if rng.random() < 0.5:
             t = rng.random()
-            return qa + (qb - qa) * t + rng.normal(0, 0.5, 6)
-        lo = np.array([-math.pi, -math.pi, -2.6, -math.pi, -math.pi, -math.pi])
-        hi = np.array([math.pi, 0.0, 2.6, math.pi, math.pi, math.pi])
+            return qa + (qb - qa) * t + rng.normal(0, 0.5, len(qa))
+        if self.kin.n == 6:
+            lo = np.array([-math.pi, -math.pi, -2.6, -math.pi, -math.pi, -math.pi])
+            hi = np.array([math.pi, 0.0, 2.6, math.pi, math.pi, math.pi])
+        else:
+            lo, hi = np.maximum(self.lo, -math.pi), np.minimum(self.hi, math.pi)
         q = rng.uniform(lo, hi)
-        q[5] = qb[5] + rng.normal(0, 0.3)            # wrist 3 only spins the tool: keep it near the goal
+        q[-1] = qb[-1] + rng.normal(0, 0.3)          # last joint only spins the tool: keep it near the goal
         return q
 
     def plan(self, qa: Sequence[float], qb: Sequence[float]) -> list[np.ndarray]:

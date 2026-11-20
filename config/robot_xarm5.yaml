@@ -1,0 +1,225 @@
+# Robot / work-cell configuration for VOCE.
+# Everything marked UNKNOWN must be verified during the supervised hardware slot
+# and recorded in PROJECT_STATUS.md. Do not fill values in by guessing.
+
+# UFactory xArm 5 (XF1203, reach 700 mm, payload 3 kg). Selected with ROBOT_CONFIG=robot_xarm5.yaml in .env.
+# robot.yaml (UR3e) stays untouched, so switching back is one line.
+robot:
+  name: "xArm 5"
+  vendor: "UFactory"
+  model: "xArm5"            # 5 joints: base, shoulder, elbow, wrist pitch, tool roll
+poses_file: poses_xarm5.yaml
+
+xarm:
+  # backend/app/robot/xarm.py (pip install xarm-python-sdk). Straight moves are cut into short joint moves.
+  movel_step_m: 0.005
+  movel_blend_radius: null      # null = stop at every 5 mm point (safe, slow). A small number blends them.
+
+# ROBOT_MODE env var overrides this. sim | ursim | real
+default_mode: ursim
+
+connections:
+  ursim:
+    # "::1" (IPv6 loopback) on purpose: on the dev Mac, UR's URSim.app (Lima) holds 127.0.0.1:30001-30004,
+    # which silently diverted RTDE/URScript to a second, powered-off simulator. Docker also listens on [::].
+    # Override with URSIM_HOST if needed.
+    host: "::1"
+  real:
+    host: null              # xArm control box IP (sticker on the box / UFactory Studio). Or ROBOT_HOST in .env
+    enabled: true
+  ports:                    # official UR client interfaces
+    dashboard: 29999
+    secondary: 30002        # accepts URScript programs
+    rtde: 30004             # state feedback (actual_q, actual_qd, runtime_state, ...)
+  connect_timeout_s: 3.0
+
+workspace:
+  zones: [sinistra, centro, destra]        # subject to verification
+  push_directions: [sinistra, destra]      # subject to verification
+  # Tray positions are ASSUMED (no camera). Initial assumption at startup:
+  trays_assumed_at: [sinistra, destra]
+
+tool:
+  description: "Wrist points. Set gripper true only after a real gripper is mounted and its driver is connected."
+  gripper: false                 # false = point with the wrist; true = grasp (refused until a gripper driver exists)
+  # TCP offsets [x, y, z, rx, ry, rz] in m / rad relative to the flange.
+  # null = UNKNOWN. Motion uses recorded joint targets, so offsets are not required to move,
+  # but they must be measured before any Cartesian feature is added.
+  tcp_offsets:
+    forca: null
+    spintore: null
+    punta: null
+  # Straight tool: distance from the flange face to the indicating tip along the tool axis (m), measured
+  # with a ruler. Used by relative moves / touch / calibration. null = relative.assumed_tip_length_m.
+  tip_length_m: null
+
+gripper:
+  # Printed passive semicircle gripper (config/semicircle_gripper.step + photos 2026-11-05). No actuator.
+  # Plate ⌀63 on the flange; a beam PERPENDICULAR to the flange axis; at its end a level half ring
+  # (inner ⌀53, outer ⌀67, 10 mm tall), mouth facing along the flange axis.
+  # The motion guard adds beam + ring as capsules to its table and self-collision checks.
+  enabled: true
+  plate_radius_m: 0.0315
+  ring_offset_m: 0.1115       # flange axis -> ring centre (the beam)
+  ring_axial_m: 0.012         # flange face -> ring centre along the flange axis (from the photo)
+  ring_outer_radius_m: 0.0335
+  ring_inner_radius_m: 0.0265
+  ring_height_m: 0.010
+  # Beam direction in the flange frame. null = learned from the first actual pose where the flange axis is level
+  # and the ring hangs straight down (as in the photos). Write it here once known, e.g. [0, -1, 0].
+  # Find it: put the arm where the beam hangs straight down, then
+  #   cd backend && python -m app.skills.mesh_model --beam-down-q <q1..q6 from the pendant, rad>
+  # or turn "Beam dir." in tools/collision_viewer.html until the model matches the real part.
+  offset_axis_flange: null     # re-measure on the xArm: scripts/beam_axis.py
+  table_clearance_m: 0.002    # ring / beam never closer than this to the table
+  self_margin_m: 0.01         # ring / beam never closer than this to base, upper arm, forearm, wrist 1
+  mass_kg: 0.08               # sent as set_payload before every program; WEIGH the part
+  cog_m: [0.0, 0.0, 0.03]
+grasp:
+  # Paper cup, MEASURE yours. The ring (inner ⌀53) only slides around the cup where it is narrower than that.
+  cup_height_m: 0.08
+  cup_bottom_diameter_m: 0.048
+  cup_top_diameter_m: 0.072
+  entry_margin_m: 0.0005      # per side, ring vs cup while sliding in
+  approach_gap_m: 0.015       # ring this far from the cup before the slide
+  above_clear_m: 0.03         # ring this far above every cup rim while travelling
+  slide_speed: 0.02           # m/s
+  lift_m: 0.08
+  lift_speed: 0.03
+
+relative:
+  # "3 cm a sinistra", "ruota la base di 30 gradi". The amount is read from the operator's own words.
+  # No centimetre cap and no 45° cap. One command may turn a joint up to 360°.
+  # A move is still refused when a link would enter the table, the tip leaves reach, or a wrist nears a singularity.
+  max_deg: 360
+  max_joint_change_rad: 6.283185  # 360°: one step may turn a joint a full circle; a link through the table is still refused
+  min_wrist_sin: 0.12           # |sin(wrist 2)| below this = wrist singularity -> refused
+  reach_min_m: 0.12
+  reach_max_m: 0.65             # xArm 5 reach 700 mm (flange); kept 5 cm inside
+  table_z_m: 0.0                # table height in the base frame until a camera calibration measures it
+                                # (0 = robot base mounted on the table surface)
+  tip_clearance_m: 0.02         # relative moves never take the tip closer than this to the table
+  joint_clearance_m: 0.04       # elbow / wrists / flange never closer than this to the table
+  assumed_tip_length_m: 0.15
+  # operator's directions as robot-base-frame unit vectors. VERIFY with a 1 cm move and swap if wrong.
+  frame:
+    sinistra: [0, -1, 0]
+    destra:   [0, 1, 0]
+    avanti:   [-1, 0, 0]
+    indietro: [1, 0, 0]
+    su:       [0, 0, 1]
+    giu:      [0, 0, -1]
+  # spoken side -> joint sign (+1/-1). "piu"/"meno" always work. VERIFY on the robot.
+  joint_sides:
+    base:   {sinistra: 1, destra: -1}
+    spalla: {su: -1, giu: 1}
+    gomito: {su: -1, giu: 1}
+    polso1: {su: -1, giu: 1}
+    polso3: {sinistra: 1, destra: -1}
+
+calib:
+  # Parked with the self-computed corners. The live calibration is `marker` below.
+  lift_m: 0.02                  # rise this much before sliding, then lower back to the same height
+  max_m: 0.9                    # a corner farther than this from the current tip is refused
+
+marker:
+  # Printed ArUco (DICT_4X4_50, id 0). Measure the black square; do not scale it to the page.
+  size_m: 0.05
+
+camera_intrinsics:
+  # Rectified left eye of the ELP stereo pair, 1600x1200, from config/stereo_calib.npz.
+  # 16 views, rms_stereo 0.355 px. Lens centres measured 60 mm; calibration baseline 60.2 mm.
+  # These pixels are /frame.jpg from `python -m stereo_depth serve`, not the phone camera.
+  fx: 1127.53
+  fy: 1127.53
+  cx: 857.02
+  cy: 642.36
+
+guard:
+  # Motion guard (backend/app/skills/motion_guard.py, docs/MOTION_GUARD.md): every confirmed motion is re-checked
+  # from the robot's actual joints just before it is sent; a blocked movej gets safe via points (same target),
+  # a movel through a singularity is refused or swapped for an equivalent movej. false = send motions unchanged.
+  enabled: true
+  tool_length_m: null           # PHYSICAL tool beyond the flange, = TCP z on the pendant. null = tool.tip_length_m or 0
+  table_z_m: null               # null = relative.table_z_m
+  link_clearance_m: 0.03        # arm surface above the table
+  # xArm 5 joint ranges (UFactory spec): J1 +-360, J2 -118..120, J3 -225..11, J4 -97..180, J5 +-360 deg
+  joint_limits_rad: [6.28, [-2.059, 2.094], [-3.927, 0.192], [-1.693, 3.142], 6.28]
+  base_column_h_m: 0.26
+  radii_m: {base: 0.065, upper: 0.055, fore: 0.05, wrist: 0.045, tool: 0.02}   # estimates, measure them
+  min_wrist_sin: 0.10           # movel only: |sin q5|
+  min_elbow_sin: 0.12           # movel only: |sin q3|
+  movel_max_rad_per_m: 15       # movel refused when a joint must turn faster than this per metre of tool travel
+  hubs: [home, attesa]          # named poses usable as via points (real mode: only verificata_reale ones)
+  obstacles: []                 # e.g. - {name: camera_stand, min: [0.35, -0.10, 0.0], max: [0.45, 0.0, 0.70]}
+  max_plan_s: 3.0
+  # Checks switched off. autocollisione / pinza_braccio use inflated capsules and refused every move from the
+  # parked pose on 2026-11-05: off until the radii are measured. Table, joint limits, singularities stay on.
+  ignore: [autocollisione, pinza_braccio]
+  blend_m: 0.02
+  mesh:
+    # Real UR3e collision meshes (config/meshes/ur3e) + gripper mesh, backend/app/skills/mesh_model.py.
+    # Replaces the gripper capsules: those put the arm on the DH points, 120 mm away from the real upper arm.
+    # Needs: pip install python-fcl trimesh. Viewer: tools/collision_viewer.html
+    enabled: false              # the meshes in config/meshes are the UR3e's: capsules only on the xArm
+    gripper_margin_m: 0.008     # gripper never closer than this to any arm link
+    table_margin_m: 0.003       # gripper / forearm / wrists never closer than this to the table
+
+stereo:
+  # ELP stereo USB camera depth service: python -m stereo_depth serve  (see docs/STEREO_DEPTH.md)
+  # null = off. With it on, set CAMERA_SOURCE=url CAMERA_URL=http://127.0.0.1:8720/frame.jpg so the
+  # app, the table calibration and the depth all use the same rectified left image.
+  url: http://127.0.0.1:8720       # python -m stereo_depth serve. Env STEREO_URL overrides.
+  timeout_s: 1.5
+  min_height_m: 0.03            # a measured rim height outside this range is ignored (fixed height used)
+  max_height_m: 0.35
+
+touch:
+  # Touch an object seen by the calibrated camera: above it, slow straight descent, hold, back up.
+  object_height_m: 0.09         # paper cup height
+  touch_offset_m: 0.005         # stop this far above the top (0 = touch the rim)
+  approach_above_m: 0.08
+  descent_speed: 0.03           # m/s (never above motion.<mode>.linear_speed)
+  hold_s: 0.5
+  workspace_margin_mm: 10       # object must be inside the calibration points' area by this much
+  max_joint_change_rad: 1.2
+  cup_point: bottom             # bbox bottom-centre: where the cup meets the table in a tilted view
+
+motion:
+  # Joint-space speed/acceleration (rad/s, rad/s^2) and linear (m/s, m/s^2).
+  ursim: {joint_speed: 0.8, joint_accel: 0.8, linear_speed: 0.15, linear_accel: 0.5}
+  sim:   {joint_speed: 0.8, joint_accel: 0.8, linear_speed: 0.15, linear_accel: 0.5}
+  real:  {joint_speed: 0.25, joint_accel: 0.3, linear_speed: 0.05, linear_accel: 0.2}  # conservative
+  stop_decel: 3.0               # rad/s^2 used by stopj()
+  joint_tolerance_rad: 0.01     # actual_q vs target to accept "arrived"
+  moving_speed_eps: 0.005       # |actual_qd| below this = not moving
+
+inspection:
+  # Quality-inspection cell: Tray A = input, Tray B = approved, Tray C = rejected.
+  # Zones are the workspace zones above; labels are what the operator says and sees.
+  input_zone: sinistra
+  pass_zone: centro
+  fail_zone: destra
+  labels: {sinistra: A, centro: B, destra: C}
+  inspect_pose: ispezione      # pose in poses.yaml: item held ~10 cm in front of the static camera
+  settle_s: 0.8                # hold still before the frame is taken
+  max_frame_age_s: 2.0         # refuse frames older than this (camera frozen / unplugged)
+
+cups:
+  # zones left-to-right AS SEEN IN THE CAMERA IMAGE (reverse it if the phone faces the robot)
+  image_zone_order: [sinistra, centro, destra]
+  zone_cuts: [0.3333, 0.6667]     # x positions (fraction of image width) of the zone borders
+  roi: [0.0, 0.0, 1.0, 1.0]       # x0 y0 x1 y1 fractions: crop to the table, keep the arm out
+  min_saturation: 50              # lowered: laptop webcams wash colours out under room light
+  min_value: 40
+  min_area_frac: 0.002
+  max_area_frac: 0.25
+  max_frame_age_s: 2.0
+  diff_threshold: 30             # background mode (after 'empty table' photo): any colour incl. white/black
+  grok_fallback: true            # ask Grok Vision when the named colour is not found locally (needs XAI_API_KEY)
+
+safety:
+  confirmation_ttl_s: 0        # 0 = stay pending until the operator confirms, cancels, or says stop
+  motion_timeout_s: 300          # real program may run this long before "timeout del movimento"
+  execution_timeout_margin_s: 5
+  stop_on_voice_loss: true      # voice channel lost while moving -> STOP (fail-safe; STOP button still works)

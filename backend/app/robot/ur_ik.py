@@ -51,6 +51,9 @@ def wrap_near(q: Sequence[float], ref: Sequence[float], limit: float = TWO_PI - 
 def ik_all(kin: Kinematics, target_tip: np.ndarray, q_ref: Sequence[float] | None = None,
            tol: float = 1e-4) -> list[np.ndarray]:
     """Every joint solution placing the tool tip at ``target_tip`` (4x4), wrapped near ``q_ref``."""
+    if kin.n == 5:
+        from .xarm_ik import ik_all as _xarm_ik
+        return _xarm_ik(kin, target_tip, q_ref, tol)
     q_ref = np.zeros(6) if q_ref is None else np.asarray(q_ref, dtype=float)
     d1, d4, d5, d6 = kin.d[0], kin.d[3], kin.d[4], kin.d[5]
     a2, a3 = kin.a[1], kin.a[2]

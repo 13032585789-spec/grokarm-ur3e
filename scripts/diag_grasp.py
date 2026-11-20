@@ -25,7 +25,7 @@ from beam_axis import read_q  # noqa: E402
 def main() -> None:
     colour = sys.argv[1] if len(sys.argv) > 1 else "red"
     s = load_settings("real", env_file=ROOT / ".env")
-    q = read_q(s.robot_host, int(s.robot["connections"]["ports"]["rtde"]))
+    q = read_q(s)
     print("关节角:", " ".join(f"{v:.3f}" for v in q))
     cam = CameraHub(s)
     cam.start()

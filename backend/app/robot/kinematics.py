@@ -14,11 +14,21 @@ from typing import Sequence
 
 import numpy as np
 
-DH = {   # d, a, alpha  (m, m, rad)
+_XA2 = math.hypot(0.2845, 0.0535)
+_XA3 = math.hypot(0.0775, 0.3425)
+_XT2 = -math.atan2(0.2845, 0.0535)
+_XT3 = math.atan2(0.2845, 0.0535) + math.atan2(0.3425, 0.0775)
+_XT4 = -math.atan2(0.3425, 0.0775)
+
+DH = {   # d, a, alpha, theta offset  (m, m, rad, rad). Standard Denavit-Hartenberg.
     "UR3e": ([0.15185, 0, 0, 0.13105, 0.08535, 0.0921], [0, -0.24355, -0.2132, 0, 0, 0],
-             [math.pi / 2, 0, 0, math.pi / 2, -math.pi / 2, 0]),
+             [math.pi / 2, 0, 0, math.pi / 2, -math.pi / 2, 0], [0.0] * 6),
     "UR5e": ([0.1625, 0, 0, 0.1333, 0.0997, 0.0996], [0, -0.425, -0.3922, 0, 0, 0],
-             [math.pi / 2, 0, 0, math.pi / 2, -math.pi / 2, 0]),
+             [math.pi / 2, 0, 0, math.pi / 2, -math.pi / 2, 0], [0.0] * 6),
+    # UFactory xArm 5 (5 joints). Source: UFactory "kinematic and dynamic parameters" (xArm 5 / 5 Lite share the
+    # geometry). At q = 0 the flange is at (207, 0, 112) mm pointing straight down, the factory zero pose.
+    "xArm5": ([0.267, 0, 0, 0, 0.097], [0, _XA2, _XA3, 0.076, 0],
+              [-math.pi / 2, 0, 0, -math.pi / 2, 0], [0.0, _XT2, _XT3, _XT4, 0.0]),
 }
 
 
@@ -28,20 +38,24 @@ class IKError(ValueError):
 
 def model_of(name: str) -> str:
     n = name.replace(" ", "").replace("(e-Series)", "e").replace("-", "").lower()
+    if n.startswith("xarm5") or n == "xarm":
+        return "xArm5"
     return "UR5e" if n.startswith("ur5") else "UR3e"
 
 
 class Kinematics:
     def __init__(self, model: str = "UR3e", tcp: Sequence[float] = (0.0, 0.0, 0.0)) -> None:
-        self.d, self.a, self.alpha = (np.array(v, dtype=float) for v in DH[model])
+        self.model = model
+        self.d, self.a, self.alpha, self.offset = (np.array(v, dtype=float) for v in DH[model])
+        self.n = len(self.d)
         self.tcp = np.array(tcp, dtype=float)
 
     def frames(self, q: Sequence[float]) -> list[np.ndarray]:
         """Base->joint-i transforms (i = 0..6); the last one is the flange."""
         T = np.eye(4)
         out = [T]
-        for i in range(6):
-            ct, st = math.cos(q[i]), math.sin(q[i])
+        for i in range(self.n):
+            ct, st = math.cos(q[i] + self.offset[i]), math.sin(q[i] + self.offset[i])
             ca, sa = math.cos(self.alpha[i]), math.sin(self.alpha[i])
             A = np.array([[ct, -st * ca, st * sa, self.a[i] * ct],
                           [st, ct * ca, -ct * sa, self.a[i] * st],
@@ -73,13 +87,13 @@ class Kinematics:
             eo = rotvec(target[:3, :3] @ T[:3, :3].T)
             if np.linalg.norm(ep) < 1e-5 and np.linalg.norm(eo) < 1e-4:
                 return q
-            J = np.zeros((6, 6))
-            for i in range(6):
+            J = np.zeros((6, self.n))
+            for i in range(self.n):
                 z, p = fr[i][:3, 2], fr[i][:3, 3]
                 J[:3, i] = np.cross(z, T[:3, 3] - p)
                 J[3:, i] = z
             e = np.concatenate([ep, eo])
-            dq = J.T @ np.linalg.solve(J @ J.T + lam ** 2 * np.eye(6), e)
+            dq = J.T @ np.linalg.solve(J @ J.T + lam ** 2 * np.eye(6), e)   # n = 5: least squares, the caller checks the error
             n = np.linalg.norm(dq)
             if n > 0.2:
                 dq *= 0.2 / n

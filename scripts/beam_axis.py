@@ -20,6 +20,9 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import os  # noqa: E402
 
 from app.config import CONFIG_DIR, load_settings  # noqa: E402
 from app.robot.kinematics import Kinematics, model_of  # noqa: E402
@@ -39,18 +42,9 @@ def beam_axis(q, model: str = "UR3e", tol_deg: float = 25.0) -> tuple[list[int] 
     return (list(AXES[best]) if angles[best] <= tol_deg else None), angles, tilt
 
 
-def read_q(host: str, port: int) -> list[float]:
-    from app.robot.ur import RTDEReader
-    r = RTDEReader(host, port)
-    r.connect(3.0)
-    end = time.monotonic() + 3.0
-    while not r.fresh() and time.monotonic() < end:
-        time.sleep(0.02)
-    if not r.fresh():
-        raise SystemExit("Nessun dato RTDE dal robot: è acceso e collegato?")
-    q = list(r.latest["actual_q"])
-    r.close()
-    return q
+def read_q(settings) -> list[float]:
+    from robot_io import read_joints
+    return read_joints(settings)[0]
 
 
 def main() -> None:
@@ -60,7 +54,7 @@ def main() -> None:
     ap.add_argument("--write", action="store_true", help="write gripper.offset_axis_flange into config/robot.yaml")
     a = ap.parse_args()
     s = load_settings(a.mode, env_file=ROOT / ".env")
-    q = a.q or read_q(s.robot_host, int(s.robot["connections"]["ports"]["rtde"]))
+    q = a.q or read_q(s)
     model = model_of(str((s.robot.get("robot") or {}).get("model", "UR3e")))
     axis, angles, tilt = beam_axis(q, model)
     print("关节角 (rad):", " ".join(f"{v:.4f}" for v in q))
@@ -71,13 +65,13 @@ def main() -> None:
     line = f"offset_axis_flange: [{axis[0]}, {axis[1]}, {axis[2]}]"
     print("✅ 横梁方向:", line)
     if a.write:
-        p = CONFIG_DIR / "robot.yaml"
+        p = CONFIG_DIR / (os.getenv("ROBOT_CONFIG") or "robot.yaml")
         text = p.read_text(encoding="utf-8")
         new, n = re.subn(r"(?m)^(\s*)offset_axis_flange:.*$", lambda m: m.group(1) + line, text, count=1)
         if n != 1:
-            raise SystemExit("robot.yaml 里没找到 offset_axis_flange 这一行，请手动填上面那一行。")
+            raise SystemExit(f"{p.name} 里没找到 offset_axis_flange 这一行，请手动填上面那一行。")
         p.write_text(new, encoding="utf-8")
-        print("✅ 已写入 config/robot.yaml。重启服务（start_real.bat）后生效。")
+        print(f"✅ 已写入 config/{p.name}。重启服务（start_real.bat）后生效。")
     else:
         print("确认没问题的话，加 --write 再运行一次，就会自动写进 config/robot.yaml。")
 

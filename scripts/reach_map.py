@@ -9,6 +9,8 @@ fail say WHICH check refused (the name the guard uses: autocollisione_mesh, pinz
     .venv\\Scripts\\python.exe scripts\\reach_map.py --step 0.01 --half 0.35
     .venv\\Scripts\\python.exe scripts\\reach_map.py --mode sim      sim settings instead of real
 
+The arm comes from .env: ROBOT_CONFIG=robot_xarm5.yaml maps the xArm 5, no ROBOT_CONFIG maps the UR3e.
+
 Output: data\\reach_map.png (green = can grasp, red = blind), data\\reach_map.csv (x, y, ok, best heading, reason).
 Robot base is the black circle at (0, 0); +x is up in the picture, +y is left, like the robot frame.
 """
@@ -60,7 +62,7 @@ def cell(guard, settings, xy, headings):
         M = np.eye(4)
         M[:3, :3] = R
         M[:3, 3] = to_flange(pts["alto"]) + R @ guard.kin.tcp
-        branches = [np.asarray(b, float) for b in ik_all(guard.kin, M, np.zeros(6))]
+        branches = [np.asarray(b, float) for b in ik_all(guard.kin, M, np.zeros(guard.kin.n))]
         if not branches:
             why["fuori_portata_ik"] += 1
             continue
@@ -124,6 +126,8 @@ def main() -> None:
             q0 = np.array((s.poses or {})[a.start]["joints"], float)
         from app.skills.grasp import plan_grasp
     headings = (0, 15, -15, 30, -30, 45, -45, 60, -60, 75, -75, 90, -90, 120, -120, 150, -150, 180)
+    if guard.kin.n == 5:   # xArm 5 is planar: a level flange can only point straight out or straight in
+        headings = (0, 180)
     xs = np.arange(-a.half, a.half + 1e-9, a.step)
     px = 600 / (2 * a.half)
     img = np.full((620, 620, 3), 255, np.uint8)

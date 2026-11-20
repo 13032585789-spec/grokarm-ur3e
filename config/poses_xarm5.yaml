@@ -1,0 +1,276 @@
+# Named poses for the xArm 5 (5 joints, radians: base, shoulder, elbow, wrist pitch, tool roll).
+#
+# Generated with the xArm 5 IK: tool straight down above the matching UR3e place. Placeholders, NOT recordings:
+# jog the arm there (UFactory Studio) and record each one with
+#   .venv\Scripts\python.exe scripts\record_pose.py <name> --mode real
+# The motion guard still refuses an unsafe path.
+poses:
+  home:
+    joints:
+    - 0.0
+    - -0.601
+    - -0.5031
+    - 1.1041
+    - 0.0
+    selezionabile: true
+    alias:
+    - casa
+    - riposo
+    - posizione iniziale
+    - iniziale
+    - 回家
+    - 回原位
+    - 原位
+    - 初始位置
+    - 初始
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  attesa:
+    joints:
+    - -0.6747
+    - -0.4771
+    - -0.5002
+    - 0.9773
+    - -0.0
+    selezionabile: true
+    alias:
+    - sicura
+    - posizione di attesa
+    - parcheggio
+    - 等待
+    - 等待位置
+    - 待命
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  sinistra_sopra:
+    joints:
+    - -0.533
+    - -0.791
+    - -0.3626
+    - 1.1536
+    - 0.0
+    selezionabile: true
+    alias:
+    - sopra sinistra
+    - sopra la zona sinistra
+    - zona sinistra
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  sinistra_presa:
+    joints:
+    - -0.5948
+    - -0.5421
+    - -0.3228
+    - 0.8649
+    - 0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  sinistra_indica:
+    joints:
+    - -0.5893
+    - -0.6161
+    - -0.3648
+    - 0.9809
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  sinistra_spinta_sinistra_inizio:
+    joints:
+    - -0.7201
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - 0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  sinistra_spinta_sinistra_fine:
+    joints:
+    - -0.5201
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - 0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  sinistra_spinta_destra_inizio:
+    joints:
+    - -0.4801
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  sinistra_spinta_destra_fine:
+    joints:
+    - -0.6801
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - 0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  centro_sopra:
+    joints:
+    - -1.033
+    - -0.791
+    - -0.3626
+    - 1.1536
+    - -0.0
+    selezionabile: true
+    alias:
+    - sopra centro
+    - sopra la zona centro
+    - zona centro
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  centro_presa:
+    joints:
+    - -1.0948
+    - -0.5421
+    - -0.3228
+    - 0.8649
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  centro_indica:
+    joints:
+    - -1.0893
+    - -0.6161
+    - -0.3648
+    - 0.9809
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  centro_spinta_sinistra_inizio:
+    joints:
+    - -1.2201
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  centro_spinta_sinistra_fine:
+    joints:
+    - -1.0201
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - 0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  centro_spinta_destra_inizio:
+    joints:
+    - -0.9801
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  centro_spinta_destra_fine:
+    joints:
+    - -1.1801
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  destra_sopra:
+    joints:
+    - -1.533
+    - -0.791
+    - -0.3626
+    - 1.1536
+    - -0.0
+    selezionabile: true
+    alias:
+    - sopra destra
+    - sopra la zona destra
+    - zona destra
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  destra_presa:
+    joints:
+    - -1.5948
+    - -0.5421
+    - -0.3228
+    - 0.8649
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  destra_indica:
+    joints:
+    - -1.5893
+    - -0.6161
+    - -0.3648
+    - 0.9809
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  destra_spinta_sinistra_inizio:
+    joints:
+    - -1.7201
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  destra_spinta_sinistra_fine:
+    joints:
+    - -1.5201
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - 0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  destra_spinta_destra_inizio:
+    joints:
+    - -1.4801
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  destra_spinta_destra_fine:
+    joints:
+    - -1.6801
+    - -0.5514
+    - -0.3487
+    - 0.9001
+    - 0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false
+  ispezione:
+    joints:
+    - -1.1894
+    - -0.4162
+    - -0.7049
+    - 1.1211
+    - -0.0
+    selezionabile: false
+    fonte: placeholder_xarm5_ik
+    verificata_reale: false

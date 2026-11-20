@@ -320,6 +320,8 @@ def model_from_settings(settings: Any, table_z: float | None = None) -> MeshMode
     mc = (r.get("guard") or {}).get("mesh") or {}
     if not mc.get("enabled", True):
         return None
+    if not str((r.get("robot") or {}).get("model", "UR3e")).upper().startswith("UR"):
+        return None   # the meshes in config/meshes are the UR3e's
     try:
         import fcl  # noqa: F401
         import trimesh  # noqa: F401

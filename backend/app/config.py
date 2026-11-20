@@ -88,7 +88,7 @@ class Settings:
     @property
     def robot_host(self) -> str | None:
         c = self.robot["connections"]
-        return c["real"]["host"] if self.mode == "real" else (os.getenv("URSIM_HOST") or c["ursim"]["host"])
+        return (os.getenv("ROBOT_HOST") or c["real"]["host"]) if self.mode == "real" else (os.getenv("URSIM_HOST") or c["ursim"]["host"])
 
     def voice_language_hint(self) -> str | None:
         """BCP-47 code for Grok Voice. The UI keeps short codes (es); the API wants es-ES."""
@@ -119,9 +119,10 @@ def load_settings(mode: str | None = None, *, config_dir: Path = CONFIG_DIR, dat
                   env_file: Path | None = ROOT / ".env") -> Settings:
     if env_file and env_file.exists():
         load_dotenv(env_file)
-    robot = _load_yaml("robot.yaml", config_dir)
+    # ROBOT_CONFIG picks the arm: robot.yaml (UR3e, default) or robot_xarm5.yaml. Its poses_file names the poses.
+    robot = _load_yaml(os.getenv("ROBOT_CONFIG") or "robot.yaml", config_dir)
     skills = _load_yaml("skills.yaml", config_dir)["skills"]
-    poses = _load_yaml("poses.yaml", config_dir)["poses"]
+    poses = _load_yaml(str(robot.get("poses_file") or "poses.yaml"), config_dir)["poses"]
 
     # user poses recorded by voice / record_pose.py (P2) live in data/, never in config/
     up = data_dir / "user_poses.yaml"
@@ -186,11 +187,12 @@ def validate(s: Settings) -> None:
     if s.mode not in s.robot.get("motion", {}):
         raise ConfigError(f"motion.{s.mode} missing in robot.yaml")
 
-    # every pose reachable by a skill sequence must exist with 6 joints
+    # every pose reachable by a skill sequence must exist with one value per joint (6 on a UR, 5 on an xArm 5)
+    nj = 5 if str((s.robot.get("robot") or {}).get("model", "")).replace(" ", "").lower().startswith("xarm5") else 6
     for name, p in s.poses.items():
         j = p.get("joints")
-        if not (isinstance(j, list) and len(j) == 6 and all(isinstance(x, (int, float)) for x in j)):
-            raise ConfigError(f"pose {name!r} must have 6 numeric joints")
+        if not (isinstance(j, list) and len(j) == nj and all(isinstance(x, (int, float)) for x in j)):
+            raise ConfigError(f"pose {name!r} must have {nj} numeric joints")
     domains = {"zona": s.zones, "direzione": s.directions,
                "posa": [k for k, v in s.poses.items() if v.get("selezionabile")]}
     for sid, sk in s.skills.items():

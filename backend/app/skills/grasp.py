@@ -136,7 +136,9 @@ def plan_grasp(guard: MotionGuard, settings: Any, q: Sequence[float], xy: tuple[
     saved = list(guard.obstacles)
     found: list[tuple[float, Plan]] = []
     try:
-        for dyaw in (0, 15, -15, 30, -30, 45, -45, 60, -60, 75, -75, 90, -90):
+        # xArm 5: the level flange axis must point radially (the arm is planar), so only straight out or straight in.
+        headings = (0, 180) if guard.kin.n == 5 else (0, 15, -15, 30, -30, 45, -45, 60, -60, 75, -75, 90, -90)
+        for dyaw in headings:
             yaw = base_yaw + math.radians(dyaw)
             got = _try_heading(guard, g, gp, q, xy, e, np.array([math.cos(yaw), math.sin(yaw), 0.0]), tz, H, zc,
                                others, saved, reasons)
@@ -226,8 +228,12 @@ def _try_heading(guard, g, gp, q, xy, e, hz, tz, H, zc, others, saved, reasons) 
         top = sorted(set(real), key=real.count, reverse=True)[:3]
         reasons.append("nessuna_postura_sicura:" + (",".join(f"{b}x{real.count(b)}" for b in top) if top else "ik_polso"))
         return None
-    box = lambda x, y, name: {"name": name, "min": [x - rtop, y - rtop, tz - 0.01],  # noqa: E731
-                              "max": [x + rtop, y + rtop, tz + H]}
+    # Cups are round, the obstacle boxes are axis-aligned: a box of half-width 0.75 r pokes out 2 mm at the corners
+    # and stays 0.25 r (9 mm) inside the cup on the axes, which the 20 mm self margin covers. A full r-wide box
+    # stuck out 15 mm on the diagonals and blocked every heading that was not along x or y.
+    hw = 0.75 * rtop
+    box = lambda x, y, name: {"name": name, "min": [x - hw, y - hw, tz - 0.01],  # noqa: E731
+                              "max": [x + hw, y + hw, tz + H]}
     as_obs = lambda bs: [(b["name"], np.array(b["min"], float), np.array(b["max"], float)) for b in bs]  # noqa: E731
     target = [box(float(xy[0]), float(xy[1]), "bicchiere")]
     rest = [box(float(a), float(b), f"bicchiere{i}") for i, (a, b) in enumerate(others)]

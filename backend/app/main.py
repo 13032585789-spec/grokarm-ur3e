@@ -30,6 +30,11 @@ def make_adapter(s: Settings):
     if s.mode == "sim":
         from .robot.sim import SimAdapter
         return SimAdapter(s.poses["home"]["joints"])
+    if str((s.robot.get("robot") or {}).get("model", "")).replace(" ", "").lower().startswith("xarm"):
+        if s.mode != "real":
+            raise RuntimeError("xArm 5: use ROBOT_MODE=sim (no robot) or real. URSim is for UR arms only.")
+        from .robot.xarm import XArmAdapter
+        return XArmAdapter(s)
     from .robot.ur import URAdapter
     return URAdapter(s)
 

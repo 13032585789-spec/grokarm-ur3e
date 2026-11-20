@@ -1,4 +1,4 @@
-"""Record the robot's CURRENT joint positions into config/poses.yaml.
+"""Record the robot's CURRENT joint positions into config/poses.yaml (xArm 5: config/poses_xarm5.yaml).
 
 Jog the robot to the pose with the teach pendant first (this script never moves it), then:
 
@@ -22,8 +22,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.config import CONFIG_DIR, load_settings  # noqa: E402
-from app.robot.ur import RTDEReader  # noqa: E402
+sys.path.insert(0, str(ROOT / "scripts"))
+from app.config import load_settings  # noqa: E402
+from robot_io import poses_path, read_joints  # noqa: E402
 
 
 def main() -> None:
@@ -35,8 +36,8 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--list", action="store_true")
     a = ap.parse_args()
-    path = CONFIG_DIR / "poses.yaml"
-    text = path.read_text()
+    path = poses_path()   # poses.yaml (UR) or poses_xarm5.yaml (ROBOT_CONFIG=robot_xarm5.yaml)
+    text = path.read_text(encoding="utf-8")
     header = "".join(line + "\n" for line in text.splitlines() if line.startswith("#"))
     data = yaml.safe_load(text)
     poses = data["poses"]
@@ -50,14 +51,10 @@ def main() -> None:
         ap.error(f"unknown pose {a.name!r} (use --new to create it)")
 
     s = load_settings(a.mode)
-    r = RTDEReader(s.robot_host, int(s.robot["connections"]["ports"]["rtde"]))
-    r.connect()
-    time.sleep(0.3)
-    d = r.latest
-    r.close()
-    if any(abs(v) > 0.005 for v in d["actual_qd"]):
+    joints, moving = read_joints(s)
+    if moving:
         raise SystemExit("robot is moving: wait until it is still")
-    q = [round(float(x), 5) for x in d["actual_q"]]
+    q = [round(float(x), 5) for x in joints]
     old = poses.get(a.name, {})
     entry = {**old, "joints": q, "fonte": f"registrata_{a.mode}_{time.strftime('%Y-%m-%d_%H:%M')}",
              "verificata_reale": a.mode == "real"}
@@ -67,7 +64,7 @@ def main() -> None:
         print("dry run: nothing written")
         return
     poses[a.name] = entry
-    path.write_text(header + yaml.safe_dump({"poses": poses}, sort_keys=False, allow_unicode=True,
+    path.write_text(encoding="utf-8", data=header + yaml.safe_dump({"poses": poses}, sort_keys=False, allow_unicode=True,
                                             default_flow_style=None, width=120))
     print(f"saved to {path}")
 

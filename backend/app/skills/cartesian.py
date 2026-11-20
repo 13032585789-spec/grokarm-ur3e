@@ -142,7 +142,7 @@ class Planner:
         lim = 2 * math.pi - 0.05
         if any(abs(x) > lim for x in q):
             raise SkillError(FUORI_LIMITI, "Un giunto supererebbe il suo limite di rotazione.")
-        if abs(math.sin(q[4])) < float(self.rel.get("min_wrist_sin", 0.12)):
+        if self.kin.n == 6 and abs(math.sin(q[4])) < float(self.rel.get("min_wrist_sin", 0.12)):
             raise SkillError(FUORI_LIMITI, "Il polso sarebbe troppo vicino a una singolarità: movimento rifiutato.")
         fr = self.kin.frames(q)
         tip = self.kin.tip(q)
@@ -150,7 +150,7 @@ class Planner:
             raise SkillError(FUORI_LIMITI, f"La punta scenderebbe sotto il limite del tavolo "
                                            f"({(tip[2] - table_z) * 1000:.0f} mm dal tavolo).")
         joint_clear = float(self.rel.get("joint_clearance_m", 0.04))
-        for i in (2, 3, 4, 5, 6):
+        for i in range(2, self.kin.n + 1):
             if fr[i][2, 3] < table_z + joint_clear:
                 raise SkillError(FUORI_LIMITI, "Una parte del braccio andrebbe troppo vicina al tavolo.")
         r = math.hypot(tip[0], tip[1])
@@ -220,6 +220,11 @@ class Planner:
             raise SkillError(RICHIESTA_AMBIGUA, f"In che verso ruoto {joint}?", param="verso",
                              options=["piu", "meno"] + list(((self.rel.get("joint_sides") or {}).get(joint) or {})))
         i = JOINTS.index(joint)
+        if self.kin.n == 5:   # xArm 5: base, shoulder, elbow, wrist pitch (polso1), tool roll (polso3)
+            if joint == "polso2":
+                raise SkillError(RICHIESTA_AMBIGUA, "xArm 5 没有第 5 个手腕关节（polso 2）：用 polso 1（俯仰）或 polso 3（旋转）。",
+                                 param="giunto", options=[j for j in JOINTS if j != "polso2"])
+            i = 4 if joint == "polso3" else i
         q1 = list(q)
         q1[i] = q[i] + sign * math.radians(deg)
         tz = self._table_z(cal)
